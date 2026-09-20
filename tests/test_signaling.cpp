@@ -12,6 +12,7 @@
 #include <atomic>
 #include <chrono>
 #include <cstdlib>
+#include <cstdlib>
 #include <future>
 #include <thread>
 
@@ -29,7 +30,10 @@ RP_TEST(signaling_end_to_end_with_python_server) {
     const uint16_t port = pickPort();
 
     // ---- start the real server ----
-    std::string cmd = "cd ../server/signaling-server && python3 server.py --host 127.0.0.1 --port " +
+    const char* py = std::getenv("REMOTEPLAY_PYTHON");
+    std::string python = py && *py ? py : "python3";
+    std::string cmd = "cd ../server/signaling-server && " + python +
+                      " server.py --host 127.0.0.1 --port " +
                       std::to_string(port) + " >/tmp/rp_server_test.log 2>&1 & echo $!";
     FILE* pf = popen(cmd.c_str(), "r");
     char buf[32]{};

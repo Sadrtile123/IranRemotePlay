@@ -296,8 +296,9 @@ void ClientSession::handleHostCapabilities(const proto::msg::HostCapabilities& c
 void ClientSession::handleNegotiation(const proto::msg::NegotiationResult& result) {
     if (!result.accepted) {
         const std::string msg = "Codec negotiation failed: " + result.note;
-        if (events_.onError) events_.onError(msg);
+        // Final state FIRST so observers see a consistent snapshot.
         finish(common::ConnectionState::Disconnected, msg, true);
+        if (events_.onError) events_.onError(msg);
         return;
     }
     updateStatus([&result](ClientStatus& s) {
@@ -321,8 +322,8 @@ void ClientSession::handleNegotiation(const proto::msg::NegotiationResult& resul
 void ClientSession::handleHostReject(const proto::msg::HostReject& reject) {
     const std::string msg = "Host rejected: " + reject.reasonText;
     logEvent(rp::log::Level::Warning, msg);
-    if (events_.onError) events_.onError(msg);
     finish(common::ConnectionState::Disconnected, msg, true);
+    if (events_.onError) events_.onError(msg);
 }
 
 void ClientSession::handleKick(const proto::msg::Kick& kick) {
