@@ -68,8 +68,10 @@ public:
 
     // Binds a UDP socket for this client, starts capture+encode, notifies
     // `onStreamStart` with (udpPort, sessionId) so the TCP layer can send
-    // STREAM_START to the client.
+    // STREAM_START to the client. `crypto` (optional) is installed BEFORE the
+    // socket binds so no unencrypted window exists once keys are established.
     bool start(const StreamConfig& cfg, uint32_t sessionId, uint8_t playerIndex,
+               std::shared_ptr<net::UdpCryptoSink> crypto,
                const std::function<void(uint16_t udpPort, uint32_t sessionId)>& onStreamStart,
                std::string* err = nullptr);
 

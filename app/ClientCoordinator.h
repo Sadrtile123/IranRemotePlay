@@ -20,6 +20,7 @@
 #include <QString>
 #include <QTimer>
 
+#include <atomic>
 #include <memory>
 #include <string>
 
@@ -101,6 +102,7 @@ private:
     QTimer statsTimer_;
     ClientUiState ui_;
     uint64_t lastRecvBytes_ = 0;
+    std::shared_ptr<std::atomic<bool>> alive_;   // detached-thread lifetime guard
     common::VideoCodec negotiatedCodec_ = common::VideoCodec::H264;
 };
 

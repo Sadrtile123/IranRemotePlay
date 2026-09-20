@@ -23,12 +23,12 @@ uint32_t qtKeyToVk(int key);
 bool isExtendedKey(int key);
 
 ClientCoordinator::ClientCoordinator(config::Config& cfg, QObject* parent)
-    : QObject(parent), cfg_(cfg) {
+    : QObject(parent), cfg_(cfg), alive_(std::make_shared<std::atomic<bool>>(true)) {
     connect(&statsTimer_, &QTimer::timeout, this, &ClientCoordinator::onStatsTimer);
     statsTimer_.setInterval(1000);
 }
 
-ClientCoordinator::~ClientCoordinator() { stop(); }
+ClientCoordinator::~ClientCoordinator() { stop(); alive_->store(false); }
 
 void ClientCoordinator::setVideoWidget(rp::ui::VideoWidget* w) { videoWidget_ = w; }
 
@@ -247,6 +247,9 @@ void ClientCoordinator::startStream(uint16_t udpPort, uint32_t udpSessionId) {
 
     streamer_ = std::make_shared<ClientStreamer>();
     streamer_->setVideoJitterTargetMs(static_cast<unsigned>(cfg_.network.jitterBufferMs));
+    const auto crypto = channel_;                 // installed before bind
+    const auto alive = alive_;
+    const auto weakStreamer = std::weak_ptr(streamer_);
 
     rp::ui::VideoWidget* widget = videoWidget_;
     const auto present = [widget](const rp::DecodedFrame& df) {
@@ -268,11 +271,17 @@ void ClientCoordinator::startStream(uint16_t udpPort, uint32_t udpSessionId) {
     const uint16_t port = internetMode_ ? relayUdpPort_ : udpPort;
     const std::string token = playerToken_;
 
-    std::thread([this, streamer = streamer_, present, onError, viaRelay, host, port, udpPort,
-                 udpSessionId, token, codec = negotiatedCodec_, widget]() mutable {
+    const uint8_t slot = static_cast<uint8_t>(ui_.playerIndex > 0 ? ui_.playerIndex - 1 : 0);
+    const bool kb = cfg_.input.keyboard;
+    const bool mouse = cfg_.input.mouse;
+    std::thread([this, weakStreamer, present, onError, viaRelay, host, port, udpPort,
+                 udpSessionId, token, codec = negotiatedCodec_, crypto, alive, slot, kb, mouse]() mutable {
+        const auto streamer = weakStreamer.lock();
+        if (!streamer) return;
         std::string serr;
-        if (!streamer->start(host, viaRelay ? port : udpPort, udpSessionId, codec,
+        if (!streamer->start(host, viaRelay ? port : udpPort, udpSessionId, codec, crypto,
                              present, onError, &serr)) {
+            if (!alive->load()) return;
             QMetaObject::invokeMethod(this, [this, serr] {
                 emit errorOccurred(QString("Stream failed to start: %1").arg(QString::fromStdString(serr)));
             }, Qt::QueuedConnection);
@@ -280,24 +289,26 @@ void ClientCoordinator::startStream(uint16_t udpPort, uint32_t udpSessionId) {
         }
         if (viaRelay) {
             streamer->udpTransport().sendRelayBind(token);
+            asio::ip::udp::endpoint relay(asio::ip::make_address(host), port);
+            streamer->udpTransport().setRelayFallback(relay);
         }
-        (void)widget;
-        QMetaObject::invokeMethod(this, [this] {
+        if (!alive->load()) return;
+        QMetaObject::invokeMethod(this, [this, weakStreamer, slot, kb, mouse] {
             ui_.status = "Streaming";
+            // Input forwarding starts only AFTER the transport exists (the
+            // streamer is running now) - fixes the null-transport race.
+            const auto s = weakStreamer.lock();
+            if (!s || !inputSender_ || inputSender_->running()) { emit stateChanged(); return; }
+            std::string ierr;
+            if (!inputSender_->start(&s->udpTransport(), slot, &ierr)) {
+                emit logLine(QString("Input: %1").arg(QString::fromStdString(ierr)));
+            } else {
+                inputSender_->setEnabled(true, kb, mouse);
+            }
+            wireInputForwarding();
             emit stateChanged();
         }, Qt::QueuedConnection);
     }).detach();
-
-    // Input forwarding (client pads + this window's keyboard/mouse).
-    inputSender_ = std::make_unique<input::InputSender>();
-    std::string ierr;
-    const uint8_t slot = static_cast<uint8_t>(ui_.playerIndex > 0 ? ui_.playerIndex - 1 : 0);
-    if (!inputSender_->start(&streamer_->udpTransport(), slot, &ierr)) {
-        emit logLine(QString("Input: %1").arg(QString::fromStdString(ierr)));
-    } else {
-        inputSender_->setEnabled(true, cfg_.input.keyboard, cfg_.input.mouse);
-    }
-    wireInputForwarding();
 }
 
 void ClientCoordinator::wireInputForwarding() {

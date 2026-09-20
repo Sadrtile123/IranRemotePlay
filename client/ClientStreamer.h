@@ -50,7 +50,8 @@ public:
     // `hostAddress` is the TCP peer address (LAN mode); the UDP port comes
     // from the TCP STREAM_START message.
     bool start(const std::string& hostAddress, uint16_t udpPort, uint32_t sessionId,
-               VideoCodec codec, PresentCallback present, ErrorCallback onError,
+               VideoCodec codec, std::shared_ptr<net::UdpCryptoSink> crypto,
+               PresentCallback present, ErrorCallback onError,
                std::string* err = nullptr);
 
     void stop();

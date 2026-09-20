@@ -36,7 +36,8 @@ InputPermission toProto(const common::InputPermissions& p) {
 } // namespace
 
 HostCoordinator::HostCoordinator(config::Config& cfg, QObject* parent)
-    : QObject(parent), cfg_(cfg), injector_(), abr_(cfg_.video.bitrateMbps * 1000) {
+    : QObject(parent), cfg_(cfg), injector_(), abr_(cfg_.video.bitrateMbps * 1000),
+      alive_(std::make_shared<std::atomic<bool>>(true)) {
     std::string err;
     injector_.init(&err);   // ViGEm optional; kb/m always available
     ui_.gamepadStatus = QString::fromStdString(injector_.gamepadStatus());
@@ -45,7 +46,7 @@ HostCoordinator::HostCoordinator(config::Config& cfg, QObject* parent)
     statsTimer_.setInterval(1000);
 }
 
-HostCoordinator::~HostCoordinator() { stop(); }
+HostCoordinator::~HostCoordinator() { stop(); alive_->store(false); }
 
 bool HostCoordinator::startLan(const host::HostLaunchSettings& settings, QString* err) {
     stop();
@@ -297,6 +298,8 @@ void HostCoordinator::startStreamFor(ClientStream& cs) {
     const std::string serverHost = serverHost_;
     const uint16_t relayUdp = relayUdpPort_;
     const std::string token = hostToken_;
+    const auto cryptoSink = cs.channel;   // installed before bind: no plaintext window
+    const auto alive = alive_;
 
     cs.streamer->setErrorCallback([this, id = cs.clientId](const std::string& msg) {
         QMetaObject::invokeMethod(this, [this, id, msg] {
@@ -306,11 +309,12 @@ void HostCoordinator::startStreamFor(ClientStream& cs) {
     });
 
     // Heavy init (capture + encoder) off the UI thread.
-    std::thread([this, sc, udpSession, player, internet, serverHost, relayUdp, token, clientId = cs.clientId, streamer]() mutable {
+    std::thread([this, sc, udpSession, player, internet, serverHost, relayUdp, token, clientId = cs.clientId, streamer, cryptoSink, alive]() mutable {
         std::string err;
-        const bool ok = streamer->start(sc, udpSession, player,
-            [this, clientId, player, sc, streamer, internet, serverHost, relayUdp, token](uint16_t udpPort, uint32_t sid) {
+        const bool ok = streamer->start(sc, udpSession, player, cryptoSink,
+            [this, alive, clientId, player, sc, streamer, internet, serverHost, relayUdp, token](uint16_t udpPort, uint32_t sid) {
                 // Called from the streamer thread before its loop starts.
+                if (!alive->load()) return;   // coordinator gone: streamer is stopped by owner
                 proto::msg::StreamStart ss;
                 ss.udpPort = udpPort;
                 ss.sessionId = sid;
@@ -328,11 +332,14 @@ void HostCoordinator::startStreamFor(ClientStream& cs) {
                                       proto::encodeMessage(env));
                 if (internet) {
                     streamer->setClientEndpoint(serverHost, relayUdp);
+                    asio::ip::udp::endpoint relay(asio::ip::make_address(serverHost), relayUdp);
+                    streamer->udpTransport().setRelayFallback(relay);
                     streamer->udpTransport().sendRelayBind(token);
                 }
                 (void)sc;
                 QMetaObject::invokeMethod(this, [this] { emit stateChanged(); }, Qt::QueuedConnection);
             }, &err);
+        if (!alive->load()) return;
         QMetaObject::invokeMethod(this, [this, ok, err, clientId] {
             if (!ok) {
                 emit errorOccurred(QString("Stream start failed: %1").arg(QString::fromStdString(err)));
@@ -436,9 +443,7 @@ void HostCoordinator::onStatsTimer() {
         ui_.captureMs = st.captureMs;
         ui_.encodeMs = st.encodeMs;
         ui_.bitrateKbps = st.actualBitrateKbps;
-        if (!ui_.encoderName.isEmpty() == false) ui_.encoderName = QString::fromStdString(st.encoderName);
-        // Install the secure channel on the transport (idempotent).
-        if (cs.channel) cs.streamer->udpTransport().setCryptoSink(cs.channel);
+        if (ui_.encoderName.isEmpty()) ui_.encoderName = QString::fromStdString(st.encoderName);
     }
 
     if (any && abrEnabled_) {

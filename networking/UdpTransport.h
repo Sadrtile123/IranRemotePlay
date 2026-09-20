@@ -93,6 +93,11 @@ public:
     // encrypted datagrams to us. Call after setPeer(relayEndpoint).
     void sendRelayBind(const std::string& token32hex);
 
+    // Phase 14 — fallback endpoint (the relay). If the peer switched to a
+    // direct path and it goes silent for >5 s, the transport returns to this
+    // endpoint automatically.
+    void setRelayFallback(asio::ip::udp::endpoint ep);
+
     // Hole-punch keepalive (tiny packet until the remote answers).
     void sendPunch(const asio::ip::udp::endpoint& to);
 
@@ -184,6 +189,8 @@ private:
     std::atomic<unsigned> videoJitterTargetMs_{ 30 };
     std::atomic<unsigned> audioJitterTargetMs_{ 30 };
     std::optional<asio::ip::udp::endpoint> lockedRemote_;   // guarded by peerMutex_
+    std::optional<asio::ip::udp::endpoint> relayFallback_;  // guarded by peerMutex_
+    std::atomic<uint64_t> lastRxAbsNs_{ 0 };
 };
 
 uint64_t steadyNowNs();

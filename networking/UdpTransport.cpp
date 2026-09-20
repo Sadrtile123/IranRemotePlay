@@ -113,6 +113,8 @@ void UdpTransport::handleDatagram(const uint8_t* buf, size_t size, const asio::i
     if (!decodeUdpHeader(buf, size, h)) { malformed_.fetch_add(1); return; }
     if (sessionId_ != 0 && h.sessionId != sessionId_) { wrongSession_.fetch_add(1); return; }
 
+    lastRxAbsNs_.store(steadyNowNs());
+
     // Phase 12: decrypt payload before anything else consumes it. The header
     // (bound as AAD) already validated above. Fail closed.
     std::vector<uint8_t> decryptedStorage;
@@ -138,6 +140,15 @@ void UdpTransport::handleDatagram(const uint8_t* buf, size_t size, const asio::i
     if (!havePeer_.load()) {
         setPeer(from);
         RP_DEBUG() << "[udp] learned peer " << from.address().to_string() << ":" << from.port();
+    } else if (secure_ && secure_->active() && (h.flags & static_cast<uint8_t>(UdpFlag::Encrypted))) {
+        // Authenticated datagram from a NEW source: the peer reached us
+        // directly (NAT hole succeeded). Direct path beats the relay.
+        std::lock_guard<std::mutex> lk(peerMutex_);
+        if (peer_ != from && (!lockedRemote_ || *lockedRemote_ == peer_)) {
+            RP_INFO() << "[udp] direct path established with " << from.address().to_string()
+                      << ":" << from.port();
+            peer_ = from;
+        }
     }
 
     if (dropUnknownRemote_.load()) {
@@ -303,6 +314,11 @@ void UdpTransport::sendSmall(UdpType type, const void* data, size_t size) {
     postDatagram(dg);
 }
 
+void UdpTransport::setRelayFallback(asio::ip::udp::endpoint ep) {
+    std::lock_guard<std::mutex> lk(peerMutex_);
+    relayFallback_ = std::move(ep);
+}
+
 void UdpTransport::sendRelayBind(const std::string& token32hex) {
     if (!running_.load() || !socket_ || !havePeer_.load()) return;
     std::lock_guard<std::mutex> lk(peerMutex_);
@@ -391,6 +407,17 @@ void UdpTransport::startPings(unsigned intervalMs) {
 
 void UdpTransport::sendPingOnce() {
     if (!running_.load()) return;
+    {
+        // Relay fallback: direct path went silent for >5 s -> return to relay.
+        std::lock_guard<std::mutex> lk(peerMutex_);
+        if (relayFallback_ && havePeer_.load() && peer_ != *relayFallback_) {
+            const uint64_t lastRx = lastRxAbsNs_.load();
+            if (lastRx != 0 && steadyNowNs() - lastRx > 5'000'000'000ull) {
+                RP_WARN() << "[udp] direct path silent >5s, falling back to relay";
+                peer_ = *relayFallback_;
+            }
+        }
+    }
     {
         std::vector<uint8_t> payload(12);
         const uint64_t now = steadyNowNs();

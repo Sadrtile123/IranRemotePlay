@@ -22,6 +22,7 @@ HostStreamer::HostStreamer() = default;
 HostStreamer::~HostStreamer() { stop("destroyed"); }
 
 bool HostStreamer::start(const StreamConfig& cfg, uint32_t sessionId, uint8_t playerIndex,
+                         std::shared_ptr<net::UdpCryptoSink> crypto,
                          const std::function<void(uint16_t, uint32_t)>& onStreamStart, std::string* err) {
     if (running_.exchange(true)) { if (err) *err = "already running"; running_.store(false); return false; }
     cfg_ = cfg;
@@ -31,6 +32,7 @@ bool HostStreamer::start(const StreamConfig& cfg, uint32_t sessionId, uint8_t pl
     // ---- UDP transport (one socket per client) ----
     transport_ = std::make_unique<net::UdpTransport>();
     transport_->setSessionId(sessionId_);
+    if (crypto) transport_->setCryptoSink(std::move(crypto));   // BEFORE bind: no plaintext window
     transport_->setControlCallback([this](net::UdpType t, const std::vector<uint8_t>& p) {
         handleUdpControl(t, p);
     });

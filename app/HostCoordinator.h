@@ -25,6 +25,7 @@
 #include <QString>
 #include <QTimer>
 
+#include <atomic>
 #include <map>
 #include <memory>
 #include <string>
@@ -132,6 +133,7 @@ private:
     double expectedFps_ = 60.0;
 
     HostUiState ui_;
+    std::shared_ptr<std::atomic<bool>> alive_;   // detached-thread lifetime guard
 };
 
 } // namespace rp::app

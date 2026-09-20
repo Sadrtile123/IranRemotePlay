@@ -20,7 +20,8 @@ ClientStreamer::ClientStreamer() = default;
 ClientStreamer::~ClientStreamer() { stop(); }
 
 bool ClientStreamer::start(const std::string& hostAddress, uint16_t udpPort, uint32_t sessionId,
-                           VideoCodec codec, PresentCallback present, ErrorCallback onError,
+                           VideoCodec codec, std::shared_ptr<net::UdpCryptoSink> crypto,
+                           PresentCallback present, ErrorCallback onError,
                            std::string* err) {
     if (running_.exchange(true)) { if (err) *err = "already running"; running_.store(false); return false; }
     hostAddress_ = hostAddress;
@@ -32,6 +33,7 @@ bool ClientStreamer::start(const std::string& hostAddress, uint16_t udpPort, uin
 
     transport_ = std::make_unique<net::UdpTransport>();
     transport_->setSessionId(sessionId_);
+    if (crypto) transport_->setCryptoSink(std::move(crypto));   // BEFORE bind: no plaintext window
     if (!transport_->bind("0.0.0.0", 0, err)) {
         transport_.reset();
         running_.store(false);
