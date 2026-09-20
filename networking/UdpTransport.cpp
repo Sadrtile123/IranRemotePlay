@@ -113,6 +113,26 @@ void UdpTransport::handleDatagram(const uint8_t* buf, size_t size, const asio::i
     if (!decodeUdpHeader(buf, size, h)) { malformed_.fetch_add(1); return; }
     if (sessionId_ != 0 && h.sessionId != sessionId_) { wrongSession_.fetch_add(1); return; }
 
+    // Phase 12: decrypt payload before anything else consumes it. The header
+    // (bound as AAD) already validated above. Fail closed.
+    std::vector<uint8_t> decryptedStorage;
+    const uint8_t* payloadPtr = buf + kUdpHeaderSize;
+    size_t payloadLen = h.payloadSize;
+    if (h.flags & static_cast<uint8_t>(UdpFlag::Encrypted)) {
+        if (!secure_) { authDrops_.fetch_add(1); return; }          // unexpected ciphertext
+        std::vector<uint8_t> clear;
+        if (!secure_->open(buf, payloadPtr, payloadLen, clear)) {   // header = full AAD
+            authDrops_.fetch_add(1);
+            return;
+        }
+        decryptedStorage = std::move(clear);
+        payloadPtr = decryptedStorage.data();
+        payloadLen = decryptedStorage.size();
+    } else if (secure_ && secure_->active()) {
+        authDrops_.fetch_add(1);                                    // plaintext after keys active
+        return;
+    }
+
     // Learn the peer address from the first valid datagram (host side after
     // the client started sending, or both sides after a hole punch).
     if (!havePeer_.load()) {
@@ -128,7 +148,8 @@ void UdpTransport::handleDatagram(const uint8_t* buf, size_t size, const asio::i
         }
     }
 
-    const uint8_t* payload = buf + kUdpHeaderSize;
+    const uint8_t* payload = payloadPtr;
+    (void)payloadLen;   // length implied by h.payloadSize / decrypted size
     const UdpType type = static_cast<UdpType>(h.type);
 
     // Inter-arrival jitter estimate (EWMA of arrival-interval deviation, ns).
@@ -306,6 +327,24 @@ void UdpTransport::postDatagram(std::vector<uint8_t>& dg) {
     std::lock_guard<std::mutex> lk(peerMutex_);
     asio::post(*io_, [this, dg = std::move(dg)]() mutable {
         if (!socket_ || !havePeer_.load()) return;
+
+        // Phase 12: seal the payload in place (header stays clear; AAD).
+        std::vector<uint8_t> out;
+        const uint8_t* payload = dg.data() + kUdpHeaderSize;
+        const size_t payloadLen = dg.size() - kUdpHeaderSize;
+        if (secure_) {
+            if (!secure_->seal(dg.data(), payload, payloadLen, out)) {
+                return;   // fail closed: never send unsealed media
+            }
+            UdpHeader h;
+            decodeUdpHeader(dg.data(), dg.size(), h);
+            h.flags |= static_cast<uint8_t>(UdpFlag::Encrypted);
+            h.payloadSize = static_cast<uint16_t>(out.size());
+            dg.assign(kUdpHeaderSize + out.size(), 0);
+            encodeUdpHeader(dg.data(), h);
+            std::memcpy(dg.data() + kUdpHeaderSize, out.data(), out.size());
+        }
+
         asio::error_code ec;
         socket_->send_to(asio::buffer(dg), peer_, 0, ec);
         if (ec) sendErrors_.fetch_add(1, std::memory_order_relaxed);

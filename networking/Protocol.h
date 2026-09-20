@@ -46,6 +46,8 @@ enum class Id : uint16_t {
     StreamStart = 0x0010,
     StreamStop = 0x0011,
     KeyframeRequest = 0x0012,
+    KeyExchange = 0x0013,       // Phase 12: ECDH P-256 pub + salt (after approval)
+    SessionKeyReady = 0x0014,   // Phase 12: both sides confirmed keys are set
 };
 
 [[nodiscard]] bool knownId(uint16_t raw);
@@ -162,12 +164,25 @@ struct StreamStop {
 
 struct KeyframeRequest {};
 
+// Phase 12 — ephemeral ECDH P-256 public key (64 raw bytes X||Y) + 16 salt
+// bytes. Sent by BOTH sides after approval; the session code authenticates
+// the HKDF derivation. See security/SecureChannel.h.
+struct KeyExchange {
+    std::vector<uint8_t> publicKey;
+    std::vector<uint8_t> salt;
+};
+
+// Phase 12 — ack after both sides derived their keys; media from now on is
+// encrypted and plaintext datagrams are rejected.
+struct SessionKeyReady {};
+
 } // namespace msg
 
 using Body = std::variant<msg::ClientHello, msg::HostReject, msg::HostApproved, msg::HostCapabilities,
                           msg::ClientCapabilities, msg::NegotiationResult, msg::Ping, msg::Pong,
                           msg::InputPermission, msg::Kick, msg::Bye,
-                          msg::StreamStart, msg::StreamStop, msg::KeyframeRequest>;
+                          msg::StreamStart, msg::StreamStop, msg::KeyframeRequest,
+                          msg::KeyExchange, msg::SessionKeyReady>;
 
 struct Envelope {
     Id type = Id::ClientHello;

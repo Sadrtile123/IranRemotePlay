@@ -11,6 +11,7 @@
 // and the send path both execute on one internal io_context thread, so all
 // public methods are thread-safe.
 
+#include "UdpCrypto.h"
 #include "UdpProtocol.h"
 
 #include <asio.hpp>
@@ -112,8 +113,16 @@ public:
     [[nodiscard]] UdpStatsSnapshot stats() const;
     void resetStats();
 
+    [[nodiscard]] uint64_t authDrops() const { return authDrops_.load(); }
+
     // If true, packets from a non-locked remote are dropped (security default on).
     void setDropUnknownRemote(bool drop) { dropUnknownRemote_ = drop; }
+
+    // Phase 12 — enables AES-256-GCM on every datagram payload (header stays
+    // clear for relay routing; it is bound as AAD). Once the sink reports
+    // active(), plaintext datagrams are rejected (fail closed).
+    void setCryptoSink(std::shared_ptr<UdpCryptoSink> sink) { secure_ = std::move(sink); }
+    [[nodiscard]] bool secure() const { return secure_ && secure_->active(); }
 
 private:
     void runIo();
@@ -162,6 +171,8 @@ private:
 
     InputCallback inputCb_;
     ControlCallback controlCb_;
+    std::shared_ptr<UdpCryptoSink> secure_;
+    std::atomic<uint64_t> authDrops_{ 0 };
     std::atomic<bool> dropUnknownRemote_{ true };
     std::atomic<bool> autoKeyframeRequest_{ true };
     uint64_t lastKeyframeReqNs_ = 0;                    // guarded by mediaMutex_

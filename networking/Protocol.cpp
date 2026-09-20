@@ -21,6 +21,8 @@ bool knownId(uint16_t raw) {
         case Id::StreamStart:
         case Id::StreamStop:
         case Id::KeyframeRequest:
+        case Id::KeyExchange:
+        case Id::SessionKeyReady:
             return true;
         default:
             return false;
@@ -43,6 +45,8 @@ const char* idName(Id id) {
         case Id::StreamStart: return "STREAM_START";
         case Id::StreamStop: return "STREAM_STOP";
         case Id::KeyframeRequest: return "KEYFRAME_REQUEST";
+        case Id::KeyExchange: return "KEY_EXCHANGE";
+        case Id::SessionKeyReady: return "SESSION_KEY_READY";
     }
     return "UNKNOWN";
 }
@@ -154,6 +158,13 @@ void writeMsg(ByteWriter& w, const msg::StreamStop& m) { w.str(m.reason); }
 
 void writeMsg(ByteWriter& /*w*/, const msg::KeyframeRequest&) {}
 
+void writeMsg(ByteWriter& w, const msg::KeyExchange& m) {
+    w.bytes(m.publicKey.data(), m.publicKey.size());
+    w.bytes(m.salt.data(), m.salt.size());
+}
+
+void writeMsg(ByteWriter& /*w*/, const msg::SessionKeyReady&) {}
+
 // Per-message readers ------------------------------------------------------
 
 bool readMsg(ByteReader& r, msg::ClientHello& m) {
@@ -245,6 +256,16 @@ bool readMsg(ByteReader& r, msg::StreamStop& m) {
 }
 
 bool readMsg(ByteReader& r, msg::KeyframeRequest&) { return r.ok() && r.remaining() == 0; }
+
+bool readMsg(ByteReader& r, msg::KeyExchange& m) {
+    m.publicKey.resize(64);
+    m.salt.resize(16);
+    r.bytes(m.publicKey.data(), 64);
+    r.bytes(m.salt.data(), 16);
+    return r.ok() && r.remaining() == 0;
+}
+
+bool readMsg(ByteReader& r, msg::SessionKeyReady&) { return r.ok() && r.remaining() == 0; }
 
 } // namespace
 
@@ -345,6 +366,18 @@ std::optional<Envelope> decodeMessage(uint16_t rawType, const uint8_t* data, uin
         }
         case Id::KeyframeRequest: {
             msg::KeyframeRequest m;
+            ok = readMsg(r, m);
+            if (ok) e.body = std::move(m);
+            break;
+        }
+        case Id::KeyExchange: {
+            msg::KeyExchange m;
+            ok = readMsg(r, m);
+            if (ok) e.body = std::move(m);
+            break;
+        }
+        case Id::SessionKeyReady: {
+            msg::SessionKeyReady m;
             ok = readMsg(r, m);
             if (ok) e.body = std::move(m);
             break;
