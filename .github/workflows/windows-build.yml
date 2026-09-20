@@ -13,26 +13,32 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # Real Python on PATH first; avoids the EACCES WindowsApps python stub
-      # issue that intermittently breaks install-qt-action on windows runners.
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.12'
 
-      - name: Install Qt 6 (MSVC 2022 64-bit)
-        uses: jurplel/install-qt-action@v4
-        with:
-          version: '6.8.*'
-          arch: 'win64_msvc2022_64'
-          cache: 'true'
-
-      - name: Configure (MSVC, VS 2022 generator)
+      # Qt installed via aqtinstall directly (deterministic, no third-party
+      # action runtime involved).
+      - name: Install Qt 6.8.1 (MSVC 2022 64-bit)
         shell: pwsh
         run: |
-          $qtRoot = (Get-Item $env:Qt6_DIR).Parent.Parent.Parent.FullName
+          python -m pip install --disable-pip-version-check aqtinstall
+          python -m aqt install-qt windows desktop 6.8.1 win64_msvc2022_64 -O "$env:RUNNER_TEMP\Qt"
+
+      - name: Locate Qt root
+        id: qt
+        shell: pwsh
+        run: |
+          $cfg = Get-ChildItem -Recurse -Filter Qt6Config.cmake "$env:RUNNER_TEMP\Qt" |
+                 Select-Object -First 1
+          if (-not $cfg) { Write-Error "Qt6Config.cmake not found"; exit 1 }
+          $qtRoot = $cfg.Directory.Parent.Parent.Parent.FullName
           Write-Host "Qt root: $qtRoot"
-          cmake -S . -B build -G "Visual Studio 17 2022" -A x64 "-DCMAKE_PREFIX_PATH=$qtRoot"
+          "prefix=$qtRoot" | Add-Content -Path $env:GITHUB_OUTPUT -Encoding utf8
+
+      - name: Configure (MSVC, VS 2022 generator)
+        run: cmake -S . -B build -G "Visual Studio 17 2022" -A x64 "-DCMAKE_PREFIX_PATH=${{ steps.qt.outputs.prefix }}"
 
       - name: Build (Release)
         run: cmake --build build --config Release
@@ -44,6 +50,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: RemotePlay-windows-x64
-          path: |
-            build/bin/Release/*.exe
+          path: build/bin/Release/*.exe
           if-no-files-found: error
