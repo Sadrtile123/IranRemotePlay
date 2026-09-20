@@ -1,0 +1,27 @@
+RemotePlay 0.1.0 - Windows 10/11 x64
+====================================
+
+QUICK START
+  1. Run RemotePlay.exe (no installation needed).
+  2. Host: pick your game window, choose LAN or Internet mode, share the code.
+  3. Join: enter the address + code, click Join.
+
+GAMEPADS (remote players appear as Xbox 360 controllers on the host)
+  Gamepad streaming needs the free ViGEmBus driver (one-time install):
+    https://github.com/nefarius/ViGEmBus/releases
+  Install it ONLY on the HOST PC. Without it, keyboard/mouse streaming still
+  works and RemotePlay tells you gamepads are unavailable.
+
+FOR PLAYING OVER THE INTERNET (no port forwarding)
+  Deploy the included signaling server on any VPS:
+    python3 server/signaling-server/server.py --port 9000
+  Hosts select "Internet mode" and enter your server address.
+  All media + input is end-to-end encrypted (AES-256-GCM); the server only
+  relays ciphertext.
+
+VERIFY YOUR INSTALL (optional, run from cmd):
+  tools\rp_tool_capturedump.exe 3     - tests screen capture
+  tools\rp_tool_encodetest.exe        - tests the video encoder
+
+Requires a GPU or CPU with H.264 encode (hardware encoders NVENC/AMF/QSV are
+used automatically when present; otherwise libx264).

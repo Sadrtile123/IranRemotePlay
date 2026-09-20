@@ -3,6 +3,7 @@ name: windows-build
 on:
   push:
     branches: [main]
+    tags: ['v*']
   pull_request:
   workflow_dispatch:
 
@@ -37,6 +38,19 @@ jobs:
           Write-Host "Qt root: $qtRoot"
           "prefix=$qtRoot" | Add-Content -Path $env:GITHUB_OUTPUT -Encoding utf8
 
+      # FFmpeg shared build (headers + import libs + DLLs).
+      - name: Download FFmpeg (win64 shared)
+        shell: pwsh
+        run: |
+          $ff = "$env:RUNNER_TEMP\ffmpeg"
+          New-Item -ItemType Directory -Force -Path $ff | Out-Null
+          Invoke-WebRequest -Uri "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl-shared.zip" `
+            -OutFile "$env:RUNNER_TEMP\ffmpeg.zip"
+          Expand-Archive -Path "$env:RUNNER_TEMP\ffmpeg.zip" -DestinationPath $ff -Force
+          $root = Get-ChildItem -Directory "$ff" | Select-Object -First 1
+          Write-Host "FFmpeg root: $($root.FullName)"
+          "dir=$($root.FullName)" | Add-Content -Path $env:GITHUB_OUTPUT -Encoding utf8
+
       # Self-contained MSVC build: locate VS via vswhere, enter the x64
       # environment, then configure/build/test with Ninja in one cmd session.
       - name: Configure, build, test (MSVC x64 + Ninja)
@@ -53,17 +67,85 @@ jobs:
           if (-not (Test-Path $vcvars)) { Write-Error "vcvars64.bat not found"; exit 1 }
 
           $qtPrefix = "${{ steps.qt.outputs.prefix }}"
+          $ffDir = "${{ steps.ffmpeg.outputs.dir }}"
           $cmd = "`"$vcvars`" && " +
                  "cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release " +
-                 "`"-DCMAKE_PREFIX_PATH=$qtPrefix`" && " +
+                 "`"-DCMAKE_PREFIX_PATH=$qtPrefix`" " +
+                 "`"-DREMOTEPLAY_FFMPEG_DIR=$ffDir`" && " +
                  "cmake --build build --parallel && " +
-                 "ctest --test-dir build --output-on-failure"
+                 "ctest --test-dir build --output-on-failure --timeout 300"
           cmd /d /c $cmd
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Package distribution
+        shell: pwsh
+        run: |
+          $qt = "${{ steps.qt.outputs.prefix }}"
+          $ff = "${{ steps.ffmpeg.outputs.dir }}"
+          $out = "dist\RemotePlay-Windows-x64"
+          New-Item -ItemType Directory -Force -Path "$out\platforms","$out\styles","$out\imageformats","$out\tools","$out\server\signaling-server" | Out-Null
+
+          Copy-Item build\bin\RemotePlay.exe "$out\"
+          Copy-Item build\bin\rp_tool_capturedump.exe,build\bin\rp_tool_encodetest.exe "$out\tools\"
+
+          Copy-Item "$qt\bin\Qt6Core.dll","$qt\bin\Qt6Gui.dll","$qt\bin\Qt6Widgets.dll" "$out\"
+          Copy-Item "$qt\plugins\platforms\qwindows.dll" "$out\platforms\"
+          if (Test-Path "$qt\plugins\styles") { Copy-Item "$qt\plugins\styles\*.dll" "$out\styles\" -ErrorAction SilentlyContinue }
+          Copy-Item "$qt\plugins\imageformats\*.dll" "$out\imageformats\" -ErrorAction SilentlyContinue
+
+          Copy-Item "$ff\bin\avcodec-*.dll","$ff\bin\avutil-*.dll","$ff\bin\swscale-*.dll","$ff\bin\swresample-*.dll" "$out\"
+
+          Copy-Item server\signaling-server\server.py,server\signaling-server\test_server.py "$out\server\signaling-server\"
+          Copy-Item README.md,LICENSE "$out\"
+          if (Test-Path docs\DEPLOYING.md) { Copy-Item docs\DEPLOYING.md "$out\docs-DEPLOYING.md" }
+          if (Test-Path docs\BUILDING.md) { Copy-Item docs\BUILDING.md "$out\docs-BUILDING.md" }
+
+          Compress-Archive -Path $out -DestinationPath RemotePlay-Windows-x64.zip
+          Get-ChildItem $out | ForEach-Object { Write-Host $_.Name }
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
           name: RemotePlay-windows-x64
-          path: build/bin/*.exe
+          path: |
+            RemotePlay-Windows-x64.zip
+            build/bin/*.exe
           if-no-files-found: error
+
+      # Releases: created automatically for tags (v0.1.0, ...).
+      - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        run: |
+          $tag = "${env:GITHUB_REF_NAME}"
+          $headers = @{ Authorization = "token $env:GITHUB_TOKEN"; Accept = "application/vnd.github+json" }
+          $body = @{
+            tag_name = $tag
+            name = "RemotePlay $tag"
+            body = @"
+          Automatic build of RemotePlay $tag.
+
+          **Download**: ``RemotePlay-Windows-x64.zip`` (Windows 10/11 x64, no installer needed)
+
+          - Host + Join in one app (LAN direct and Internet modes)
+          - H.264/HEVC streaming with NVENC/AMF/QSV hardware encoders + x264 fallback
+          - Opus audio, XInput/DirectInput gamepads, ViGEm virtual controllers, kb/mouse
+          - End-to-end AES-256-GCM encryption with session-code authenticated key exchange
+          - Signaling server (Python) included; no port forwarding required
+          - 10 test suites run on every build
+
+          See RUN-THIS-FIRST.txt inside the zip for quick start + ViGEmBus driver link.
+          "@
+            draft = $false
+            prerelease = $false
+          } | ConvertTo-Json
+          $release = Invoke-RestMethod -Method Post -Uri "https://api.github.com/repos/${env:GITHUB_REPOSITORY}/releases" `
+                        -Headers $headers -ContentType "application/json" -Body $body
+          Write-Host "Release created: $($release.html_url)"
+          $assetPath = (Resolve-Path "RemotePlay-Windows-x64.zip").Path
+          $uploadUrl = "https://uploads.github.com/repos/${env:GITHUB_REPOSITORY}/releases/$($release.id)/assets?name=RemotePlay-Windows-x64.zip"
+          Invoke-RestMethod -Method Post -Uri $uploadUrl -Headers $headers `
+            -ContentType "application/zip" -InFile $assetPath
+          Write-Host "Asset uploaded."
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

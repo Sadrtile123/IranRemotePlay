@@ -94,7 +94,7 @@ void MainWindow::showSettings() { pages_->setCurrentIndex(3); }
 void MainWindow::closeEvent(QCloseEvent* event) {
     // Tear sessions down cleanly before the UI disappears.
     hostPage_->stopIfHosting();
-    clientPage_->disconnectIfConnected();
+    clientPage_->disconnectIfActive();
     event->accept();
 }
 

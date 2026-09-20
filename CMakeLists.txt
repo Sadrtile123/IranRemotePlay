@@ -152,6 +152,8 @@ if(REMOTEPLAY_BUILD_GUI AND REMOTEPLAY_MEDIA_AVAILABLE)
             target_compile_options(RemotePlay PRIVATE /W4 /permissive- /utf-8 /Zc:__cplusplus /MP)
         else()
             target_compile_options(RemotePlay PRIVATE -Wall -Wextra)
+            # Static C++/GCC runtime: fewer DLLs to ship, no version conflicts.
+            target_link_options(RemotePlay PRIVATE -static-libgcc -static-libstdc++)
         endif()
         set_target_properties(RemotePlay PROPERTIES
             RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
@@ -169,11 +171,16 @@ endif()
 # Verification tools (Windows console)
 # ---------------------------------------------------------------------------
 if(WIN32 AND REMOTEPLAY_MEDIA_AVAILABLE)
+    if(NOT MSVC)
+        set(REMOTEPLAY_TOOL_LINK_OPTS -static-libgcc -static-libstdc++)
+    endif()
     add_executable(rp_tool_capturedump tools/capture_dump.cpp)
     target_link_libraries(rp_tool_capturedump PRIVATE rp::core rp::media)
+    target_link_options(rp_tool_capturedump PRIVATE ${REMOTEPLAY_TOOL_LINK_OPTS})
 
     add_executable(rp_tool_encodetest tools/encode_test.cpp)
     target_link_libraries(rp_tool_encodetest PRIVATE rp::core rp::media)
+    target_link_options(rp_tool_encodetest PRIVATE ${REMOTEPLAY_TOOL_LINK_OPTS})
     set_target_properties(rp_tool_capturedump rp_tool_encodetest PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 endif()
