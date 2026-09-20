@@ -1,5 +1,10 @@
 // Phase 4/5 — client streaming engine implementation. See ClientStreamer.h.
 
+#include <memory>
+#include <string>
+#include <thread>
+#include <utility>
+#include <vector>
 #include "ClientStreamer.h"
 
 #include "../common/Log.h"

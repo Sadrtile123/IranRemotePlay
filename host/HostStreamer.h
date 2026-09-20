@@ -8,6 +8,8 @@
 //
 // Windows-only (capture + encoder). One HostStreamer instance per client.
 
+#include <utility>
+#include <vector>
 #include "../audio/WasapiCapture.h"
 #include "../capture/ScreenCapture.h"
 #include "../encoding/AudioCodec.h"

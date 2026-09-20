@@ -1,4 +1,12 @@
 // RemotePlay - host/HostSession.cpp
+#include <chrono>
+#include <memory>
+#include <mutex>
+#include <stdexcept>
+#include <string>
+#include <thread>
+#include <variant>
+#include <vector>
 #include "host/HostSession.h"
 
 #include "security/SessionCodes.h"

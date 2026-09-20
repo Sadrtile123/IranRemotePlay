@@ -1,5 +1,9 @@
 // Phase 3 — FFmpeg video encoder implementation. See VideoEncoder.h.
 
+#include <algorithm>
+#include <string>
+#include <utility>
+#include <vector>
 #include "VideoEncoder.h"
 
 #include "../common/Log.h"

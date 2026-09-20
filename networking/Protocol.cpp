@@ -1,4 +1,8 @@
 // RemotePlay - networking/Protocol.cpp
+#include <optional>
+#include <utility>
+#include <variant>
+#include <vector>
 #include "networking/Protocol.h"
 
 #include <algorithm>

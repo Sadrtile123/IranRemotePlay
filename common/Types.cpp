@@ -1,4 +1,7 @@
 // RemotePlay - common/Types.cpp
+#include <optional>
+#include <string>
+#include <vector>
 #include "common/Types.h"
 
 #include <algorithm>

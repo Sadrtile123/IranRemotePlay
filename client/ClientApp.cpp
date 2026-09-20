@@ -1,4 +1,8 @@
 // RemotePlay - client/ClientApp.cpp
+#include <memory>
+#include <string>
+#include <utility>
+#include <vector>
 #include "client/ClientApp.h"
 
 namespace rp::client {

@@ -1,5 +1,8 @@
 // Phase 6 — WASAPI loopback capture implementation. See WasapiCapture.h.
 
+#include <string>
+#include <thread>
+#include <utility>
 #include "WasapiCapture.h"
 
 #include "../common/Log.h"

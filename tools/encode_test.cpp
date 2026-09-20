@@ -4,6 +4,7 @@
 // results, packet stats and encode latency. Works without a GPU (falls back to
 // libx264), so it also validates the software fallback path.
 
+#include <string>
 #include "../encoding/VideoEncoder.h"
 #include "../common/Log.h"
 

@@ -2,6 +2,9 @@
 // signaling server (started as a subprocess): register, join, relay TCP pair
 // with opaque RemotePlay frames, and UDP media relay forwarding.
 
+#include <stdexcept>
+#include <utility>
+#include <vector>
 #include "../networking/Packet.h"
 #include "../networking/TcpTransport.h"
 #include "../networking/UdpTransport.h"

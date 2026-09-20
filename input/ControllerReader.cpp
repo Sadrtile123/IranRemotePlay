@@ -1,5 +1,10 @@
 // Phase 8 — client controller reading implementation. See ControllerReader.h.
 
+#include <memory>
+#include <mutex>
+#include <string>
+#include <utility>
+#include <vector>
 #include "ControllerReader.h"
 #include "../common/WinHeaders.h"
 

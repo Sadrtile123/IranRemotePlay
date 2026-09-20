@@ -1,5 +1,12 @@
 // Phase 16 — client coordinator implementation. See ClientCoordinator.h.
 
+#include <atomic>
+#include <memory>
+#include <string>
+#include <thread>
+#include <utility>
+#include <variant>
+#include <vector>
 #include "ClientCoordinator.h"
 
 #include "../common/Log.h"

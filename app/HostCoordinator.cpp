@@ -1,5 +1,11 @@
 // Phase 16 — host coordinator implementation. See HostCoordinator.h.
 
+#include <atomic>
+#include <memory>
+#include <string>
+#include <utility>
+#include <variant>
+#include <vector>
 #include "HostCoordinator.h"
 
 #include "../common/Log.h"

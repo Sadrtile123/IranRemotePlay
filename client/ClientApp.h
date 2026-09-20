@@ -2,6 +2,9 @@
 // Qt-free facade between the UI and ClientSession.
 #pragma once
 
+#include <memory>
+#include <utility>
+#include <vector>
 #include "client/ClientSession.h"
 #include "common/Config.h"
 

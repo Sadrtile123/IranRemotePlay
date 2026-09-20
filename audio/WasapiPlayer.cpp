@@ -1,5 +1,11 @@
 // Phase 7 — WASAPI playback implementation. See WasapiPlayer.h.
 
+#include <algorithm>
+#include <chrono>
+#include <mutex>
+#include <string>
+#include <thread>
+#include <utility>
 #include "WasapiPlayer.h"
 
 #include "../common/Log.h"

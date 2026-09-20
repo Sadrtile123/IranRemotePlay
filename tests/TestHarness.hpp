@@ -2,6 +2,7 @@
 // Minimal zero-dependency test harness used by the ctest suite.
 #pragma once
 
+#include <utility>
 #include <cstdio>
 #include <functional>
 #include <string>

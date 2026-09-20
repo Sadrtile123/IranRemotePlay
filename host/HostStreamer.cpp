@@ -15,6 +15,14 @@
 //    with a clear error instead of looping forever + spamming dialogs.
 //  * COM (MTA) initialized on threads that touch DXGI.
 
+#include <algorithm>
+#include <functional>
+#include <memory>
+#include <mutex>
+#include <string>
+#include <thread>
+#include <utility>
+#include <vector>
 #include "HostStreamer.h"
 
 #include "../common/Config.h"

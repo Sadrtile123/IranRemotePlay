@@ -1,4 +1,7 @@
 // RemotePlay - common/Paths.cpp
+#include <stdexcept>
+#include <string>
+#include <vector>
 #include "common/Paths.h"
 
 #include "common/Log.h"

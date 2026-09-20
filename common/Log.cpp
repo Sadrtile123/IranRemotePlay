@@ -1,4 +1,6 @@
 // RemotePlay - common/Log.cpp
+#include <string>
+#include <utility>
 #include "common/Log.h"
 
 #include <atomic>

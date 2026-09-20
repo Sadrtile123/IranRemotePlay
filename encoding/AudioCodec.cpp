@@ -1,5 +1,8 @@
 // Phase 7 — Opus encode/decode via FFmpeg libopus. See AudioCodec.h.
 
+#include <string>
+#include <utility>
+#include <vector>
 #include "AudioCodec.h"
 
 #include "../common/Log.h"

@@ -3,6 +3,8 @@
 // owns the session lifecycle, and exposes thread-safe snapshots.
 #pragma once
 
+#include <memory>
+#include <utility>
 #include "host/HostSession.h"
 #include "common/Config.h"
 

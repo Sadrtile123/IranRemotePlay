@@ -1,5 +1,8 @@
 // Phase 5 — FFmpeg video decoder implementation. See VideoDecoder.h.
 
+#include <string>
+#include <utility>
+#include <vector>
 #include "VideoDecoder.h"
 
 #include "../common/Log.h"

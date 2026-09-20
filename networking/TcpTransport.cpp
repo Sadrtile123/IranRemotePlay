@@ -1,4 +1,8 @@
 // RemotePlay - networking/TcpTransport.cpp
+#include <chrono>
+#include <memory>
+#include <string>
+#include <vector>
 #include "networking/TcpTransport.h"
 
 #include "common/Log.h"

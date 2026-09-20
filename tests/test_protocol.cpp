@@ -1,5 +1,6 @@
 // RemotePlay - tests/test_protocol.cpp
 // Message encode/decode round-trips and codec negotiation logic.
+#include <variant>
 #include "networking/Protocol.h"
 
 #include "TestHarness.hpp"

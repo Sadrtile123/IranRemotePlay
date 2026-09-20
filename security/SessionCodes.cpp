@@ -1,4 +1,6 @@
 // RemotePlay - security/SessionCodes.cpp
+#include <optional>
+#include <string>
 #include "security/SessionCodes.h"
 
 #include "common/Log.h"

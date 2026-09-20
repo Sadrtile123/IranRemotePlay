@@ -6,6 +6,7 @@
 // VideoWidget (presentation, marshaled to the UI thread) + SignalingClient
 // (join by code, relay media endpoint).
 
+#include <vector>
 #include "../adapt/AdaptiveBitrate.h"
 #include "../client/ClientApp.h"
 #include "../client/ClientStreamer.h"

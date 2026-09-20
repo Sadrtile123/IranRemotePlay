@@ -1,4 +1,8 @@
 // RemotePlay - host/HostApp.cpp
+#include <memory>
+#include <string>
+#include <utility>
+#include <vector>
 #include "host/HostApp.h"
 
 #include "common/Paths.h"

@@ -9,6 +9,7 @@
 // Vibration events from the game are forwarded to `onVibration` so the host
 // can echo them back to the remote client's physical pad.
 
+#include <utility>
 #include "InputProtocol.h"
 
 #include "../common/WinHeaders.h"

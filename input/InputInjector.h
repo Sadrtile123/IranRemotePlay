@@ -3,6 +3,7 @@
 // enforcement on the LIVE path (checked for every packet, not only at
 // handshake time), plus key release safety when clients vanish.
 
+#include <utility>
 #include "InputProtocol.h"
 #include "VirtualGamepad.h"
 

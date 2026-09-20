@@ -1,5 +1,7 @@
 // RemotePlay - tests/test_packet.cpp
 // Frame construction/parsing and byte (de)serialization round-trips.
+#include <string>
+#include <vector>
 #include "networking/Packet.h"
 
 #include "TestHarness.hpp"

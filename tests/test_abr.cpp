@@ -1,5 +1,6 @@
 // Phase 15 tests — adaptive bitrate hysteresis, smoothing, bounds.
 
+#include <vector>
 #include "adapt/AdaptiveBitrate.h"
 
 #include "TestHarness.hpp"

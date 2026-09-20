@@ -1,5 +1,10 @@
 // Phase 12 — secure channel implementation. See SecureChannel.h.
 
+#include <array>
+#include <mutex>
+#include <string>
+#include <utility>
+#include <vector>
 #include "SecureChannel.h"
 
 #include "../common/Log.h"

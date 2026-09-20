@@ -1,4 +1,5 @@
 // RemotePlay - common/Config.cpp
+#include <string>
 #include "common/Config.h"
 
 #include "common/Log.h"

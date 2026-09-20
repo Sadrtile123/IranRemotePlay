@@ -1,4 +1,12 @@
 // RemotePlay - client/ClientSession.cpp
+#include <chrono>
+#include <functional>
+#include <memory>
+#include <mutex>
+#include <string>
+#include <thread>
+#include <variant>
+#include <vector>
 #include "client/ClientSession.h"
 
 #include <utility>

@@ -1,5 +1,6 @@
 // Phase 15 — adaptive bitrate implementation. See AdaptiveBitrate.h.
 
+#include <optional>
 #include "AdaptiveBitrate.h"
 
 #include <algorithm>

@@ -2,6 +2,7 @@
 // v0.1.1 — join card + recent hosts + real fullscreen (F11) + host:port
 // parsing + live status. See ClientWindow.h.
 
+#include <vector>
 #include "ClientWindow.h"
 #include "../app/ClientCoordinator.h"
 #include "Theme.h"

@@ -1,6 +1,10 @@
 // Phase 4 tests — UDP protocol logic + real loopback transport.
 // Runs on every platform (pure logic + localhost sockets).
 
+#include <algorithm>
+#include <string>
+#include <utility>
+#include <vector>
 #include "networking/UdpProtocol.h"
 #include "networking/UdpTransport.h"
 

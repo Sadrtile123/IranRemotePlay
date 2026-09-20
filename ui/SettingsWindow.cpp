@@ -1,4 +1,5 @@
 // RemotePlay - ui/SettingsWindow.cpp
+#include <string>
 #include "ui/SettingsWindow.h"
 
 #include "common/Config.h"

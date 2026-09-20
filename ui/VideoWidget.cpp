@@ -1,5 +1,6 @@
 // Phase 5 — client video surface implementation. See VideoWidget.h.
 
+#include <vector>
 #include "VideoWidget.h"
 #include "Theme.h"
 

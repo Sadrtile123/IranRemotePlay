@@ -12,6 +12,7 @@
 // docs/PROTOCOL.md and intentionally not implemented yet.
 #pragma once
 
+#include <utility>
 #include <cstddef>
 #include <cstdint>
 #include <optional>

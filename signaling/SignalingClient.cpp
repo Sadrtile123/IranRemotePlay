@@ -1,5 +1,12 @@
 // Phase 13 — signaling client implementation. See SignalingClient.h.
 
+#include <memory>
+#include <mutex>
+#include <optional>
+#include <stdexcept>
+#include <string>
+#include <thread>
+#include <utility>
 #include "SignalingClient.h"
 
 #include "../common/Log.h"

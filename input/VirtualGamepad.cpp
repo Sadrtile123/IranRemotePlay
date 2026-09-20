@@ -3,6 +3,7 @@
 // ViGEmBus driver + vigemClient.dll (MIT, Nefarius) are optional prerequisites.
 // We speak only its documented public C API, resolved dynamically.
 
+#include <string>
 #include "VirtualGamepad.h"
 
 #include "../common/Log.h"

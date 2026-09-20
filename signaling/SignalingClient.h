@@ -9,6 +9,7 @@
 // TLS: for production deployments put the server behind TLS (server.py
 // --tls-cert/--tls-key or a reverse proxy) — documented in DEPLOYING.md.
 
+#include <utility>
 #include <asio.hpp>
 
 #include <atomic>

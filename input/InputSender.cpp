@@ -1,5 +1,10 @@
 // Phases 8/11 — client input sender implementation. See InputSender.h.
 
+#include <chrono>
+#include <mutex>
+#include <string>
+#include <thread>
+#include <vector>
 #include "InputSender.h"
 
 #include "../common/Log.h"

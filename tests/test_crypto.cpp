@@ -2,6 +2,9 @@
 // Verifies: ECDH agreement, HKDF determinism, AES-GCM tamper detection,
 // replay window rejection, fail-closed behavior.
 
+#include <array>
+#include <string>
+#include <vector>
 #include "../security/Crypto.h"
 #include "../security/SecureChannel.h"
 

@@ -1,5 +1,8 @@
 // Phase 2 — DXGI Output Duplication capture. See ScreenCapture.h for the design.
 
+#include <string>
+#include <utility>
+#include <vector>
 #include "ScreenCapture.h"
 
 #include "../common/Log.h"

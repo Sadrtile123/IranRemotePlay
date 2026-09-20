@@ -11,6 +11,7 @@
 // and the send path both execute on one internal io_context thread, so all
 // public methods are thread-safe.
 
+#include <utility>
 #include "UdpCrypto.h"
 #include "UdpProtocol.h"
 

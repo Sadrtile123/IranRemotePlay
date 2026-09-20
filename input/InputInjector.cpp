@@ -1,5 +1,7 @@
 // Phases 9/11 — input injection implementation. See InputInjector.h.
 
+#include <mutex>
+#include <string>
 #include "InputInjector.h"
 
 #include "../common/WinHeaders.h"

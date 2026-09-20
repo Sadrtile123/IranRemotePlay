@@ -1,4 +1,7 @@
 // RemotePlay - networking/Packet.cpp
+#include <optional>
+#include <string>
+#include <vector>
 #include "networking/Packet.h"
 
 #include <cstring>

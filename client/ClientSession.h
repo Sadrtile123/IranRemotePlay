@@ -9,6 +9,7 @@
 // All public methods are thread-safe; events fire on the network thread.
 #pragma once
 
+#include <vector>
 #include "common/Log.h"
 #include "common/Types.h"
 #include "common/Version.h"

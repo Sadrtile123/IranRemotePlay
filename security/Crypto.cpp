@@ -1,5 +1,9 @@
 // Phase 12 — CNG crypto implementation. See Crypto.h.
 
+#include <array>
+#include <optional>
+#include <utility>
+#include <vector>
 #include "Crypto.h"
 
 #include <windows.h>

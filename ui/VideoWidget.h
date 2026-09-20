@@ -6,6 +6,7 @@
 // fullscreen support (F11 / double-click). Forwards keyboard/mouse events as
 // signals for the input pipeline (Phase 11).
 
+#include <utility>
 #include <QImage>
 #include <QWidget>
 
