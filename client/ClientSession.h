@@ -88,8 +88,13 @@ public:
     // thread). Type must be >= 0x0010; payload is pre-encoded by the caller.
     void sendAppMessage(uint16_t type, const std::vector<uint8_t>& payload);
 
-    // Internet mode (Phase 13): attach an already-relay-paired connection and
-    // run the handshake over it (replaces the direct connect path).
+    // Internet mode (Phase 13): dial the signaling server's relay port and run
+    // the normal handshake over the paired pipe (own io thread; replaces the
+    // direct connect path).
+    void startViaRelay(const ClientSessionParams& params, const std::string& serverHost,
+                       uint16_t relayTcpPort, const std::string& token);
+
+    // Tests: attach an already-paired connection.
     void attachConnection(net::TcpConnection::Ptr conn, const ClientSessionParams& params);
 
     [[nodiscard]] bool active() const { return running_.load(); }
@@ -128,6 +133,9 @@ private:
     std::thread thread_;
     std::unique_ptr<net::TcpClient> connector_;
     net::TcpConnection::Ptr connection_;
+    std::string relayServerHost_;
+    uint16_t relayServerPort_ = 0;
+    std::string relayToken_;
     std::unique_ptr<asio::steady_timer> heartbeat_;
     std::chrono::steady_clock::time_point lastActivity_{};
 

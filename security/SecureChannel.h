@@ -18,6 +18,7 @@
 // The receive side enforces a 64-entry sliding replay window on the counter.
 
 #include "Crypto.h"
+#include "../networking/UdpCrypto.h"
 
 #include <array>
 #include <atomic>
@@ -28,7 +29,7 @@
 
 namespace rp::crypto {
 
-class SecureChannel {
+class SecureChannel : public net::UdpCryptoSink {
 public:
     SecureChannel() = default;
 
@@ -41,16 +42,16 @@ public:
                               const std::string& sessionCode,
                               bool weAreHost);
 
-    [[nodiscard]] bool active() const { return active_; }
+    [[nodiscard]] bool active() const override { return active_; }
 
     // Seals one datagram payload. `header` = the 30-byte UDP header (AAD).
     // Output sealed payload = 8 (counter) + ciphertext + 16 (tag).
     [[nodiscard]] bool seal(const uint8_t* header, const uint8_t* payload, size_t len,
-                            std::vector<uint8_t>& out);
+                            std::vector<uint8_t>& out) override;
 
     // Opens a sealed payload. Fails closed on tag mismatch or replay.
     [[nodiscard]] bool open(const uint8_t* header, const uint8_t* sealed, size_t len,
-                            std::vector<uint8_t>& out);
+                            std::vector<uint8_t>& out) override;
 
     [[nodiscard]] uint64_t packetsSealed() const { return sealed_.load(); }
     [[nodiscard]] uint64_t packetsOpened() const { return opened_.load(); }

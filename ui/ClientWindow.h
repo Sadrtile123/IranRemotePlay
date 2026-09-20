@@ -1,59 +1,65 @@
-// RemotePlay - ui/ClientWindow.h
-// Client page: name + host address + session code, CONNECT, live status and
-// ping, DISCONNECT, log pane.
 #pragma once
+// Phase 16 — client window: join form, full stream view (VideoWidget with
+// F10 stats overlay), quality banner, input forwarding.
 
-#include "client/ClientApp.h"
+#include "../common/Config.h"
+#include "VideoWidget.h"
 
 #include <QWidget>
 
+#include <QString>
+#include <vector>
+
+class QComboBox;
 class QLabel;
 class QLineEdit;
-class QPlainTextEdit;
 class QPushButton;
-class QSpinBox;
-class QTimer;
 
-namespace rp::config { struct Config; }
+namespace rp::app { class ClientCoordinator; }
 
 namespace rp::ui {
 
 class ClientWindow : public QWidget {
     Q_OBJECT
 public:
-    explicit ClientWindow(config::Config& config, QWidget* parent = nullptr);
+    explicit ClientWindow(config::Config& cfg, QWidget* parent = nullptr);
+    ~ClientWindow() override;
 
-    void disconnectIfConnected();
+    void disconnectIfActive();
 
 signals:
     void backToHomeRequested();
 
 private slots:
-    void connectToHost();
-    void disconnectFromHost();
-    void refreshStatus();
-    void appendLog(const QString& line);
+    void join();
+    void leave();
+    void onStateChanged();
+    void onDisconnected(const QString& reason);
+    void onConnectedToHost(const QString& hostName, const QString& gameName, int playerIndex);
 
 private:
-    void setConnectedUi(bool connected);
-    [[nodiscard]] client::JoinSettings collectSettings() const;
-    void wireSessionEvents();
+    void buildUi();
+    [[nodiscard]] std::vector<QString> statsLines() const;
+    void setStreamingUi(bool streaming);
+    void updateQualityBanner();
 
-    config::Config& config_;
-    client::ClientApp app_;
+    config::Config& cfg_;
+    app::ClientCoordinator* coordinator_ = nullptr;
 
+    // join form
+    QWidget* joinForm_ = nullptr;
+    QComboBox* modeCombo_ = nullptr;
     QLineEdit* nameEdit_ = nullptr;
-    QLineEdit* addressEdit_ = nullptr;
-    QSpinBox* portSpin_ = nullptr;
+    QLineEdit* hostEdit_ = nullptr;        // LAN: host address / Internet: server address
     QLineEdit* codeEdit_ = nullptr;
-    QPushButton* connectButton_ = nullptr;
-    QPushButton* disconnectButton_ = nullptr;
-    QLabel* statusLabel_ = nullptr;
-    QLabel* detailsLabel_ = nullptr;
-    QLabel* pingLabel_ = nullptr;
-    QLabel* inputLabel_ = nullptr;
-    QPlainTextEdit* logView_ = nullptr;
-    QTimer* pollTimer_ = nullptr;
+    QPushButton* joinButton_ = nullptr;
+    QPushButton* backButton_ = nullptr;
+    QLabel* joinStatusLabel_ = nullptr;
+
+    // stream view
+    VideoWidget* video_ = nullptr;
+    QPushButton* leaveButton_ = nullptr;
+    QLabel* infoLabel_ = nullptr;
 };
 
 } // namespace rp::ui

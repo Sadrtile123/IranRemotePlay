@@ -24,7 +24,7 @@ namespace rp::input {
 
 class InputSender {
 public:
-    InputSender() = default;
+    InputSender();
     ~InputSender();
 
     InputSender(const InputSender&) = delete;

@@ -78,6 +78,15 @@ std::vector<ClientRow> HostApp::clients() const {
     return session_ ? session_->clients() : std::vector<ClientRow>{};
 }
 
+void HostApp::sendAppMessage(uint32_t clientId, uint16_t type, const std::vector<uint8_t>& payload) {
+    if (session_) session_->sendAppMessage(clientId, type, payload);
+}
+
+void HostApp::connectRelayClient(const std::string& serverHost, uint16_t relayTcpPort,
+                                 const std::string& token, int playerIndexHint) {
+    if (session_) session_->connectRelayClient(serverHost, relayTcpPort, token, playerIndexHint);
+}
+
 void HostApp::approve(uint32_t clientId, bool accept) {
     if (session_) session_->approveClient(clientId, accept);
 }

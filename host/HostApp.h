@@ -12,7 +12,8 @@
 namespace rp::host {
 
 struct HostLaunchSettings {
-    std::string gameName;                    // free text in Phase 1
+    std::string hostName = "Host";
+    std::string gameName;                    // free text / picked window title
     common::CaptureMode captureMode = common::CaptureMode::Window;
     common::Resolution resolution{};
     uint32_t fps = 60;
@@ -22,6 +23,10 @@ struct HostLaunchSettings {
     bool requireApproval = true;
     common::InputPermissions inputDefaults;
     size_t maxClients = kMaxClients;
+    int outputIndex = 0;                     // monitor capture index
+    void* windowHwnd = nullptr;              // window capture target (HWND)
+    bool audioEnabled = true;
+    int audioBitrateKbps = 128;
 };
 
 class HostApp {
@@ -48,6 +53,11 @@ public:
     [[nodiscard]] std::vector<ClientRow> clients() const;
     void approve(uint32_t clientId, bool accept);
     void kick(uint32_t clientId);
+
+    // Phase 13/12 forwarders to the live session.
+    void sendAppMessage(uint32_t clientId, uint16_t type, const std::vector<uint8_t>& payload);
+    void connectRelayClient(const std::string& serverHost, uint16_t relayTcpPort,
+                            const std::string& token, int playerIndexHint);
     void setClientInputEnabled(uint32_t clientId, bool enabled);
 
 private:

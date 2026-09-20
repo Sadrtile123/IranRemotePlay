@@ -30,6 +30,12 @@ public:
     void connect(const JoinSettings& settings);
     void disconnect();
 
+    // Phase 12/13 forwarders to the live session.
+    void sendAppMessage(uint16_t type, const std::vector<uint8_t>& payload);
+    void startViaRelay(const ClientSessionParams& params, const std::string& serverHost,
+                       uint16_t relayTcpPort, const std::string& token);
+    [[nodiscard]] ClientSession& session() { return *session_; }   // set only while connected
+
     [[nodiscard]] bool connected() const { return session_ && session_->active(); }
     [[nodiscard]] ClientStatus status() const;
 

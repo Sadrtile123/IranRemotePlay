@@ -98,6 +98,7 @@ public:
     [[nodiscard]] HostStreamStats stats() const;
     [[nodiscard]] bool running() const { return running_.load(); }
     [[nodiscard]] uint16_t udpPort() const { return transport_ ? transport_->localPort() : 0; }
+    [[nodiscard]] net::UdpTransport& udpTransport() { return *transport_; }
     void setErrorCallback(ErrorCallback cb) { errorCb_ = std::move(cb); }
 
 private:

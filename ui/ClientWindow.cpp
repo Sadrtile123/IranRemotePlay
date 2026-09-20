@@ -1,297 +1,191 @@
-// RemotePlay - ui/ClientWindow.cpp
-#include "ui/ClientWindow.h"
+// Phase 16 — client window implementation. See ClientWindow.h.
 
-#include "common/Config.h"
-#include "common/Paths.h"
-#include "common/Types.h"
-#include "ui/Theme.h"
+#include "ClientWindow.h"
+#include "../app/ClientCoordinator.h"
+#include "Theme.h"
 
-#include <QFormLayout>
+#include <QComboBox>
 #include <QGroupBox>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QLineEdit>
-#include <QPlainTextEdit>
+#include <QMessageBox>
 #include <QPushButton>
-#include <QSpinBox>
-#include <QTimer>
+#include <QStackedLayout>
 #include <QVBoxLayout>
-#include <QMetaObject>
-
-#include <QRegularExpression>
 
 namespace rp::ui {
 
-namespace {
+using app::ClientCoordinator;
 
-QString stateToText(common::ConnectionState s) { return QString::fromUtf8(common::toString(s)); }
+ClientWindow::ClientWindow(config::Config& cfg, QWidget* parent) : QWidget(parent), cfg_(cfg) {
+    coordinator_ = new ClientCoordinator(cfg_, this);
+    buildUi();
 
-} // namespace
-
-ClientWindow::ClientWindow(config::Config& config, QWidget* parent)
-    : QWidget(parent), config_(config) {
-    auto* rootLayout = new QVBoxLayout(this);
-    rootLayout->setContentsMargins(24, 18, 24, 18);
-    rootLayout->setSpacing(12);
-
-    auto* header = new QHBoxLayout();
-    auto* title = new QLabel(QStringLiteral("JOIN A SESSION"), this);
-    title->setFont(headerFont(18));
-    auto* backButton = new QPushButton(QStringLiteral("< Back"), this);
-    header->addWidget(title);
-    header->addStretch(1);
-    header->addWidget(backButton);
-    rootLayout->addLayout(header);
-    connect(backButton, &QPushButton::clicked, this, &ClientWindow::backToHomeRequested);
-
-    // --- Join form ----------------------------------------------------------
-    auto* joinBox = new QGroupBox(QStringLiteral("Connection"), this);
-    auto* form = new QFormLayout(joinBox);
-
-    nameEdit_ = new QLineEdit(joinBox);
-    nameEdit_->setPlaceholderText(QStringLiteral("Your display name"));
-    if (!config_.profile.name.empty()) {
-        nameEdit_->setText(QString::fromStdString(config_.profile.name));
-    }
-    form->addRow(QStringLiteral("Your name:"), nameEdit_);
-
-    addressEdit_ = new QLineEdit(joinBox);
-    addressEdit_->setPlaceholderText(QStringLiteral("Host IP, e.g. 192.168.1.20"));
-    addressEdit_->setText(QStringLiteral("127.0.0.1"));
-    form->addRow(QStringLiteral("Host address:"), addressEdit_);
-
-    portSpin_ = new QSpinBox(joinBox);
-    portSpin_->setRange(1024, 65535);
-    portSpin_->setValue(config_.network.listenPort);
-    form->addRow(QStringLiteral("Port:"), portSpin_);
-
-    codeEdit_ = new QLineEdit(joinBox);
-    codeEdit_->setPlaceholderText(QStringLiteral("Session code, e.g. ABC7-K92P"));
-    codeEdit_->setMaxLength(14); // "XXXX-XXXX" plus typing room
-    form->addRow(QStringLiteral("Session code:"), codeEdit_);
-
-    // Friendly typing: uppercase and keep only code characters.
-    connect(codeEdit_, &QLineEdit::textEdited, codeEdit_, [this](const QString& text) {
-        QString filtered;
-        for (const QChar ch : text) {
-            const char16_t c = ch.unicode();
-            const bool ok = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
-                            (c >= '2' && c <= '9') || c == '-';
-            if (ok) filtered.append(ch.toUpper());
-        }
-        if (filtered != text) {
-            codeEdit_->setText(filtered);
-        }
+    connect(coordinator_, &ClientCoordinator::logLine, this, [this](const QString& l) {
+        infoLabel_->setText(l.left(140));
     });
-
-    rootLayout->addWidget(joinBox);
-
-    connectButton_ = new QPushButton(QStringLiteral("CONNECT"), this);
-    connectButton_->setMinimumHeight(40);
-    disconnectButton_ = new QPushButton(QStringLiteral("DISCONNECT"), this);
-    disconnectButton_->setMinimumHeight(40);
-    disconnectButton_->setVisible(false);
-    rootLayout->addWidget(connectButton_);
-    rootLayout->addWidget(disconnectButton_);
-
-    // --- Status -------------------------------------------------------------
-    auto* statusBox = new QGroupBox(QStringLiteral("Session"), this);
-    auto* statusLayout = new QVBoxLayout(statusBox);
-
-    statusLabel_ = new QLabel(QStringLiteral("Not connected"), statusBox);
-    statusLabel_->setAlignment(Qt::AlignCenter);
-    statusLabel_->setFont(headerFont(14));
-    statusLayout->addWidget(statusLabel_);
-
-    detailsLabel_ = new QLabel(QStringLiteral("-"), statusBox);
-    detailsLabel_->setAlignment(Qt::AlignCenter);
-    detailsLabel_->setWordWrap(true);
-    statusLayout->addWidget(detailsLabel_);
-
-    pingLabel_ = new QLabel(QStringLiteral("Ping: -"), statusBox);
-    pingLabel_->setAlignment(Qt::AlignCenter);
-    statusLayout->addWidget(pingLabel_);
-
-    inputLabel_ = new QLabel(QStringLiteral("Input: -"), statusBox);
-    inputLabel_->setAlignment(Qt::AlignCenter);
-    statusLayout->addWidget(inputLabel_);
-
-    rootLayout->addWidget(statusBox, 1);
-
-    logView_ = new QPlainTextEdit(this);
-    logView_->setReadOnly(true);
-    logView_->setMaximumBlockCount(400);
-    logView_->setMaximumHeight(120);
-    rootLayout->addWidget(logView_);
-
-    pollTimer_ = new QTimer(this);
-    pollTimer_->setInterval(500);
-    connect(pollTimer_, &QTimer::timeout, this, &ClientWindow::refreshStatus);
-
-    connect(connectButton_, &QPushButton::clicked, this, &ClientWindow::connectToHost);
-    connect(disconnectButton_, &QPushButton::clicked, this, &ClientWindow::disconnectFromHost);
-
-    wireSessionEvents();
+    connect(coordinator_, &ClientCoordinator::stateChanged, this, &ClientWindow::onStateChanged);
+    connect(coordinator_, &ClientCoordinator::disconnected, this, &ClientWindow::onDisconnected);
+    connect(coordinator_, &ClientCoordinator::errorOccurred, this, [this](const QString& msg) {
+        joinStatusLabel_->setText(msg);
+    });
+    connect(coordinator_, &ClientCoordinator::connectedToHost, this, &ClientWindow::onConnectedToHost);
 }
 
-void ClientWindow::wireSessionEvents() {
-    client::ClientSession::Events ev;
+ClientWindow::~ClientWindow() { disconnectIfActive(); }
 
-    ev.onState = [this](common::ConnectionState state) {
-        QMetaObject::invokeMethod(this,
-                                  [this, state] {
-                                      statusLabel_->setText(stateToText(state));
-                                  },
-                                  Qt::QueuedConnection);
-    };
-    ev.onConnected = [this](const client::ClientStatus&) {
-        QMetaObject::invokeMethod(this,
-                                  [this] {
-                                      setConnectedUi(true);
-                                      appendLog(QStringLiteral("[INFO] Session established."));
-                                  },
-                                  Qt::QueuedConnection);
-    };
-    ev.onDisconnected = [this](const std::string& reason) {
-        QMetaObject::invokeMethod(this,
-                                  [this, reason] {
-                                      setConnectedUi(false);
-                                      statusLabel_->setText(QStringLiteral("DISCONNECTED"));
-                                      appendLog(QStringLiteral("[INFO] Disconnected: %1")
-                                                    .arg(QString::fromStdString(reason)));
-                                  },
-                                  Qt::QueuedConnection);
-    };
-    ev.onError = [this](const std::string& message) {
-        QMetaObject::invokeMethod(this,
-                                  [this, message] {
-                                      appendLog(QStringLiteral("[ERROR] %1")
-                                                    .arg(QString::fromStdString(message)));
-                                  },
-                                  Qt::QueuedConnection);
-    };
-    ev.onLog = [this](rp::log::Level level, const std::string& message) {
-        QMetaObject::invokeMethod(this,
-                                  [this, level, message] {
-                                      QString prefix = QStringLiteral("[INFO]");
-                                      switch (level) {
-                                          case rp::log::Level::Warning: prefix = QStringLiteral("[WARNING]"); break;
-                                          case rp::log::Level::Error: prefix = QStringLiteral("[ERROR]"); break;
-                                          case rp::log::Level::Critical: prefix = QStringLiteral("[CRITICAL]"); break;
-                                          case rp::log::Level::Debug: prefix = QStringLiteral("[DEBUG]"); break;
-                                          case rp::log::Level::Trace: prefix = QStringLiteral("[TRACE]"); break;
-                                          default: break;
-                                      }
-                                      appendLog(prefix + QStringLiteral(" ") +
-                                                QString::fromStdString(message));
-                                  },
-                                  Qt::QueuedConnection);
-    };
-    app_.setEvents(std::move(ev));
+void ClientWindow::buildUi() {
+    auto* rootLayout = new QVBoxLayout(this);
+
+    // ---------------- join form ----------------
+    joinForm_ = new QWidget;
+    auto* box = new QGroupBox(tr("Join a session"));
+    auto* form = new QVBoxLayout(box);
+
+    form->addWidget(new QLabel(tr("Your name:")));
+    nameEdit_ = new QLineEdit(QString::fromStdString(cfg_.profile.name));
+    form->addWidget(nameEdit_);
+
+    form->addWidget(new QLabel(tr("Connection mode:")));
+    modeCombo_ = new QComboBox;
+    modeCombo_->addItem(tr("LAN / direct (host IP)"));
+    modeCombo_->addItem(tr("Internet (signaling server)"));
+    form->addWidget(modeCombo_);
+
+    form->addWidget(new QLabel(tr("Host / server address:")));
+    hostEdit_ = new QLineEdit;
+    hostEdit_->setPlaceholderText("192.168.1.20  or  play.example.com");
+    form->addWidget(hostEdit_);
+
+    form->addWidget(new QLabel(tr("Session code:")));
+    codeEdit_ = new QLineEdit;
+    codeEdit_->setPlaceholderText("e.g. 57EA6A6Q");
+    form->addWidget(codeEdit_);
+
+    joinButton_ = new QPushButton(tr("Join"));
+    joinButton_->setObjectName("primary");
+    connect(joinButton_, &QPushButton::clicked, this, &ClientWindow::join);
+    form->addWidget(joinButton_);
+
+    joinStatusLabel_ = new QLabel;
+    joinStatusLabel_->setWordWrap(true);
+    form->addWidget(joinStatusLabel_);
+
+    backButton_ = new QPushButton(tr("Back"));
+    connect(backButton_, &QPushButton::clicked, this, [this] {
+        disconnectIfActive();
+        emit backToHomeRequested();
+    });
+    form->addWidget(backButton_);
+
+    auto* wrap = new QHBoxLayout;
+    wrap->addStretch(1);
+    wrap->addWidget(box);
+    wrap->addStretch(1);
+    joinForm_->setLayout(wrap);
+    rootLayout->addWidget(joinForm_, 1);
+
+    // ---------------- stream view ----------------
+    video_ = new VideoWidget;
+    video_->setStatsProvider([this] { return statsLines(); });
+    coordinator_->setVideoWidget(video_);
+    rootLayout->addWidget(video_, 1);
+    video_->setVisible(false);
+
+    auto* bottomBar = new QWidget;
+    auto* bar = new QHBoxLayout(bottomBar);
+    infoLabel_ = new QLabel;
+    infoLabel_->setWordWrap(true);
+    bar->addWidget(infoLabel_, 1);
+    leaveButton_ = new QPushButton(tr("Disconnect"));
+    connect(leaveButton_, &QPushButton::clicked, this, &ClientWindow::leave);
+    bar->addWidget(leaveButton_);
+    rootLayout->addWidget(bottomBar);
+    bottomBar->setVisible(false);
+
+    setLayout(rootLayout);
 }
 
-client::JoinSettings ClientWindow::collectSettings() const {
-    client::JoinSettings s;
-    s.displayName = nameEdit_->text().trimmed().toStdString();
-    s.hostAddress = addressEdit_->text().trimmed().toStdString();
-    s.hostPort = static_cast<uint16_t>(portSpin_->value());
-    s.sessionCode = codeEdit_->text().trimmed().toStdString();
-    return s;
+std::vector<QString> ClientWindow::statsLines() const {
+    const auto s = coordinator_->uiState();
+    return {
+        QString("Player %1 on %2's session").arg(s.playerIndex).arg(s.hostName.isEmpty() ? "?" : s.hostName),
+        QString("RTT %1 ms | loss %2% | jitter %3 ms").arg(s.rttMs, 0, 'f', 0).arg(s.lossPercent, 0, 'f', 1).arg(s.jitterMs, 0, 'f', 1),
+        QString("In %1 Mbps | FPS %2 | decode %3 ms").arg(s.bitrateKbps / 1000.0, 0, 'f', 1).arg(s.fps, 0, 'f', 0).arg(s.decodeMs, 0, 'f', 1),
+        QString("Video %1x%2 (%3)").arg(s.width).arg(s.height).arg(s.decoderName.isEmpty() ? "-" : s.decoderName),
+        QString("Audio %1").arg(s.audioActive ? QString("on (%1 ms dec)").arg(s.audioMs, 0, 'f', 1) : "off"),
+    };
 }
 
-void ClientWindow::connectToHost() {
-    auto settings = collectSettings();
-
-    if (settings.displayName.empty()) {
-        appendLog(QStringLiteral("[ERROR] Enter your display name first."));
+void ClientWindow::join() {
+    const QString code = codeEdit_->text().trimmed();
+    const QString host = hostEdit_->text().trimmed();
+    const QString name = nameEdit_->text().trimmed().isEmpty() ? "Player" : nameEdit_->text().trimmed();
+    if (code.isEmpty() || host.isEmpty()) {
+        joinStatusLabel_->setText(tr("Enter the host/server address and the session code."));
         return;
     }
-    if (settings.hostAddress.empty()) {
-        appendLog(QStringLiteral("[ERROR] Enter the host address first."));
+    joinStatusLabel_->setText(tr("Connecting..."));
+
+    QString err;
+    const bool ok = modeCombo_->currentIndex() == 1
+        ? coordinator_->startInternet(host, 9000, code, name, &err)
+        : coordinator_->startLan(host, cfg_.network.listenPort, name, code, &err);
+    if (!ok) {
+        joinStatusLabel_->setText(err.isEmpty() ? tr("Could not connect.") : err);
         return;
     }
-    // Validate the session code shape (ABC7-K92P).
-    static const QRegularExpression re(QStringLiteral("^[A-Z2-9]{4}-?[A-Z2-9]{4}$"));
-    const QString code = QString::fromStdString(settings.sessionCode);
-    if (!re.match(code).hasMatch()) {
-        appendLog(QStringLiteral("[ERROR] Session code looks wrong. Format: ABC7-K92P"));
-        return;
-    }
-
-    // Remember the name for future sessions.
-    config_.profile.name = settings.displayName;
-    if (!config_.save(paths::configFilePath())) {
-        appendLog(QStringLiteral("[WARNING] Could not save settings."));
-    }
-
-    wireSessionEvents(); // events live on the app and are passed to new sessions
-    app_.connect(settings);
-
-    setConnectedUi(true);
-    statusLabel_->setText(QStringLiteral("CONNECTING"));
-    appendLog(QStringLiteral("[INFO] Connecting to %1:%2 with code %3...")
-                  .arg(QString::fromStdString(settings.hostAddress))
-                  .arg(settings.hostPort)
-                  .arg(code));
-    pollTimer_->start();
+    setStreamingUi(true);
 }
 
-void ClientWindow::disconnectFromHost() {
-    app_.disconnect();
-    setConnectedUi(false);
-    statusLabel_->setText(QStringLiteral("DISCONNECTED"));
-    pollTimer_->stop();
-    refreshStatus();
+void ClientWindow::leave() {
+    coordinator_->stop();
+    setStreamingUi(false);
 }
 
-void ClientWindow::disconnectIfConnected() {
-    if (app_.connected()) {
-        disconnectFromHost();
+void ClientWindow::disconnectIfActive() {
+    if (coordinator_ && coordinator_->active()) {
+        coordinator_->stop();
+        setStreamingUi(false);
     }
 }
 
-void ClientWindow::setConnectedUi(bool connected) {
-    connectButton_->setVisible(!connected);
-    disconnectButton_->setVisible(connected);
-    nameEdit_->setEnabled(!connected);
-    addressEdit_->setEnabled(!connected);
-    portSpin_->setEnabled(!connected);
-    codeEdit_->setEnabled(!connected);
+void ClientWindow::setStreamingUi(bool streaming) {
+    joinForm_->setVisible(!streaming);
+    video_->setVisible(streaming);
+    leaveButton_->parentWidget()->setVisible(streaming);
+    if (streaming) {
+        video_->setFocus();
+        video_->setQualityBanner(tr("Connecting to stream..."));
+    } else {
+        video_->setQualityBanner("");
+    }
 }
 
-void ClientWindow::refreshStatus() {
-    const auto st = app_.status();
-
-    if (st.state == common::ConnectionState::Connected) {
-        statusLabel_->setText(QStringLiteral("CONNECTED"));
-    } else if (st.state == common::ConnectionState::Authenticating) {
-        statusLabel_->setText(QStringLiteral("WAITING FOR HOST APPROVAL"));
-    }
-
-    if (!st.hostName.empty()) {
-        detailsLabel_->setText(QStringLiteral("Connected to: <b>%1</b><br>Game: <b>%2</b>"
-                                              "<br>Stream: %3, %4x%5 @ %6 FPS, %7 Mbps")
-                                   .arg(QString::fromStdString(st.hostName),
-                                        QString::fromStdString(st.gameName),
-                                        QString::fromStdString(common::videoCodecString(st.codec)))
-                                   .arg(st.width)
-                                   .arg(st.height)
-                                   .arg(st.fps)
-                                   .arg(QString::number(st.bitrateKbps / 1000.0, 'f', 1)));
-    }
-
-    pingLabel_->setText(st.state == common::ConnectionState::Connected
-                            ? QStringLiteral("Ping: %1 ms").arg(st.rttMs)
-                            : QStringLiteral("Ping: -"));
-
-    inputLabel_->setText(QStringLiteral("Input: %1")
-                             .arg(st.input.allDisabled()
-                                      ? QStringLiteral("disabled by host")
-                                      : (st.input.controller
-                                             ? QStringLiteral("controller enabled")
-                                             : QStringLiteral("limited"))));
+void ClientWindow::onStateChanged() {
+    const auto s = coordinator_->uiState();
+    infoLabel_->setText(s.status);
+    updateQualityBanner();
 }
 
-void ClientWindow::appendLog(const QString& line) { logView_->appendPlainText(line); }
+void ClientWindow::onConnectedToHost(const QString& hostName, const QString& gameName, int playerIndex) {
+    infoLabel_->setText(tr("Connected to %1 - %2 (you are Player %3)")
+                            .arg(hostName, gameName.isEmpty() ? "?" : gameName).arg(playerIndex));
+}
+
+void ClientWindow::onDisconnected(const QString& reason) {
+    setStreamingUi(false);
+    joinStatusLabel_->setText(tr("Disconnected: %1").arg(reason));
+}
+
+void ClientWindow::updateQualityBanner() {
+    const auto s = coordinator_->uiState();
+    QString banner;
+    if (s.lossPercent > 5.0) banner = tr("Poor connection - packet loss %1%").arg(s.lossPercent, 0, 'f', 1);
+    else if (s.rttMs > 150.0) banner = tr("High latency - %1 ms").arg(s.rttMs, 0, 'f', 0);
+    else if (s.fps > 0 && s.fps < 25.0) banner = tr("Low framerate - %1 FPS").arg(s.fps, 0, 'f', 0);
+    video_->setQualityBanner(banner);
+}
 
 } // namespace rp::ui

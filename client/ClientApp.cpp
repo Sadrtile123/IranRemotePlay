@@ -23,6 +23,15 @@ void ClientApp::connect(const JoinSettings& settings) {
     session_ = std::move(session);
 }
 
+void ClientApp::sendAppMessage(uint16_t type, const std::vector<uint8_t>& payload) {
+    if (session_) session_->sendAppMessage(type, payload);
+}
+
+void ClientApp::startViaRelay(const ClientSessionParams& params, const std::string& serverHost,
+                              uint16_t relayTcpPort, const std::string& token) {
+    if (session_) session_->startViaRelay(params, serverHost, relayTcpPort, token);
+}
+
 void ClientApp::disconnect() {
     if (!session_) return;
     session_->stop();

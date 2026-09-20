@@ -55,7 +55,9 @@ protected:
 
 private:
     void drawOverlay(class QPainter& p);
-    QRect videoDestRect() const;
+
+public:
+    [[nodiscard]] QRect videoDestRect() const;
 
     QImage frame_;
     uint64_t framesPresented_ = 0;

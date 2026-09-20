@@ -96,6 +96,8 @@ static BOOL FAR PASCAL enumDevicesCallback(LPCDIDEVICEINSTANCEW inst, LPVOID ctx
     return DIENUM_CONTINUE;
 }
 
+ControllerReader::ControllerReader() = default;
+
 ControllerReader::~ControllerReader() {
     closeDirectInput();
     if (xinputDll_) { FreeLibrary(static_cast<HMODULE>(xinputDll_)); xinputDll_ = nullptr; }

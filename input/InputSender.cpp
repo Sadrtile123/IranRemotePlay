@@ -22,6 +22,8 @@ bool stateEqual(const GameControllerState& a, const GameControllerState& b) {
 
 
 
+InputSender::InputSender() = default;
+
 InputSender::~InputSender() { stop(); }
 
 bool InputSender::start(net::UdpTransport* transport, uint8_t controllerSlot, std::string* err) {

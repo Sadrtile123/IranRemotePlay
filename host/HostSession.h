@@ -23,6 +23,7 @@
 #include <chrono>
 #include <cstdint>
 #include <functional>
+#include <deque>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -104,8 +105,14 @@ public:
     // network thread). Types must be >= 0x0010 (streaming/app range).
     void sendAppMessage(uint32_t clientId, uint16_t type, const std::vector<uint8_t>& payload);
 
-    // Internet mode (Phase 13): attach an already-relay-paired connection as
-    // a new client (instead of a TCP accept). Thread-safe.
+    // Internet mode (Phase 13): dial the signaling server's relay port, run
+    // the pairing handshake, and treat the paired pipe as a new client
+    // connection. Runs on the session's own io thread. Result via onLog /
+    // client lifecycle events; playerIndex is informational.
+    void connectRelayClient(const std::string& serverHost, uint16_t relayTcpPort,
+                            const std::string& token, int playerIndexHint);
+
+    // Internet mode: attach an already-paired connection (tests). Thread-safe.
     void attachConnection(net::TcpConnection::Ptr conn);
 
     [[nodiscard]] static std::chrono::milliseconds steadyNowMs();
@@ -158,6 +165,7 @@ private:
     asio::steady_timer housekeeper_{io_};
 
     std::map<uint32_t, ClientRecord> clients_;      // network thread only
+    std::deque<std::unique_ptr<net::TcpClient>> relayDialers_;   // network thread only
     mutable std::mutex snapshotMutex_;
     std::vector<ClientRow> snapshot_;               // guarded copy for UI
 

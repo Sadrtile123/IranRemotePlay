@@ -197,6 +197,26 @@ void HostSession::sendAppMessage(uint32_t clientId, uint16_t type, const std::ve
     });
 }
 
+void HostSession::connectRelayClient(const std::string& serverHost, uint16_t relayTcpPort,
+                                     const std::string& token, int playerIndexHint) {
+    (void)playerIndexHint;
+    asio::post(io_, [this, serverHost, relayTcpPort, token] {
+        auto dialer = std::make_unique<net::TcpClient>(io_);
+        dialer->connectRelay(serverHost, relayTcpPort, token, "host", 10000,
+                             [this](std::error_code ec, net::TcpConnection::Ptr conn) {
+                                 if (ec) {
+                                     logEvent(LogLevel::Error, "Relay connect failed: " + ec.message());
+                                     return;
+                                 }
+                                 handleNewConnection(std::move(conn));
+                             });
+        // The TcpClient must outlive the async attempt: park it in a list
+        // on the network thread until the callback fires.
+        relayDialers_.push_back(std::move(dialer));
+        if (relayDialers_.size() > 8) relayDialers_.pop_front();   // bound growth
+    });
+}
+
 void HostSession::attachConnection(net::TcpConnection::Ptr conn) {
     asio::post(io_, [this, conn] {
         handleNewConnection(conn);

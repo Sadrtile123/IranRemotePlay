@@ -99,6 +99,57 @@ void ClientSession::runNetworkThreadBody() {
     io_.run();
 }
 
+void ClientSession::startViaRelay(const ClientSessionParams& params, const std::string& serverHost,
+                                  uint16_t relayTcpPort, const std::string& token) {
+    joinNetworkThread();
+    if (running_.exchange(true)) return;
+    stopping_ = false;
+    params_ = params;
+
+    updateStatus([](ClientStatus& s) {
+        s.state = common::ConnectionState::Connecting;
+        s.hostName.clear();
+        s.gameName.clear();
+        s.lastError.clear();
+        s.rttMs = 0;
+    });
+    setState(common::ConnectionState::Connecting);
+    logEvent(rp::log::Level::Info, "Connecting via relay " + serverHost + ":" +
+                                       std::to_string(relayTcpPort) + "...");
+
+    work_ = std::make_unique<WorkGuard>(asio::make_work_guard(io_));
+    connector_ = std::make_unique<net::TcpClient>(io_);
+    threadDone_ = std::promise<void>{};
+    threadDoneFuture_ = threadDone_.get_future();
+    relayServerHost_ = serverHost;
+    relayServerPort_ = relayTcpPort;
+    relayToken_ = token;
+    thread_ = std::thread([this] {
+        connector_->connectRelay(relayServerHost_, relayServerPort_, relayToken_, "client", 15000,
+                        [this](std::error_code ec, net::TcpConnection::Ptr conn) {
+                            if (ec) {
+                                const std::string msg =
+                                    "Relay connection failed: " + ec.message();
+                                logEvent(rp::log::Level::Error, msg);
+                                if (events_.onError) events_.onError(msg);
+                                finish(common::ConnectionState::Disconnected, msg, true);
+                                return;
+                            }
+                            handleConnected(std::move(conn));
+                        });
+
+        heartbeat_ = std::make_unique<asio::steady_timer>(io_);
+        heartbeat_->expires_after(kHeartbeatPeriod);
+        heartbeat_->async_wait([this](const std::error_code& ec) {
+            if (ec || stopping_.load()) return;
+            startHeartbeat();
+        });
+
+        io_.run();
+        threadDone_.set_value();
+    });
+}
+
 void ClientSession::runNetworkThread() {
     connector_->connect(params_.hostAddress, params_.hostPort, params_.connectTimeoutMs,
                         [this](std::error_code ec, net::TcpConnection::Ptr conn) {

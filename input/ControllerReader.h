@@ -29,7 +29,7 @@ struct DeviceInfo {
 
 class ControllerReader {
 public:
-    ControllerReader() = default;
+    ControllerReader();
     ~ControllerReader();
 
     ControllerReader(const ControllerReader&) = delete;

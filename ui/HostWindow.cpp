@@ -1,421 +1,369 @@
-// RemotePlay - ui/HostWindow.cpp
-#include "ui/HostWindow.h"
+// Phase 16 — host window implementation. See HostWindow.h.
 
-#include "common/Config.h"
-#include "common/Paths.h"
-#include "common/Types.h"
-#include "ui/Theme.h"
+#include "HostWindow.h"
+#include "../app/HostCoordinator.h"
+#include "../capture/ScreenCapture.h"
+#include "../common/Config.h"
+#include "Theme.h"
 
+#include <QCheckBox>
 #include <QComboBox>
-#include <QDialog>
-#include <QFormLayout>
 #include <QGroupBox>
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QLabel>
 #include <QLineEdit>
-#include <QPlainTextEdit>
+#include <QMessageBox>
 #include <QPushButton>
+#include <QSlider>
 #include <QSpinBox>
 #include <QTableWidget>
+#include <QTextStream>
+#include <QTextEdit>
 #include <QTimer>
 #include <QVBoxLayout>
 
-#include <QMetaObject>
-
 namespace rp::ui {
 
-using namespace std::chrono_literals;
+using app::HostCoordinator;
+using host::HostLaunchSettings;
 
-namespace {
+HostWindow::HostWindow(config::Config& cfg, QWidget* parent) : QWidget(parent), cfg_(cfg) {
+    coordinator_ = new HostCoordinator(cfg_, this);
+    buildUi();
 
-QString stateToText(common::ConnectionState s) { return QString::fromUtf8(common::toString(s)); }
+    connect(coordinator_, &HostCoordinator::logLine, this, &HostWindow::appendLog);
+    connect(coordinator_, &HostCoordinator::approvalRequest, this, &HostWindow::onApprovalRequest);
+    connect(coordinator_, &HostCoordinator::encoderTrouble, this, &HostWindow::onEncoderTrouble);
+    connect(coordinator_, &HostCoordinator::errorOccurred, this, [](const QString& msg) {
+        QMessageBox::warning(nullptr, "RemotePlay", msg);
+    });
+    connect(coordinator_, &HostCoordinator::stateChanged, this, &HostWindow::onStateChanged);
+    connect(coordinator_, &HostCoordinator::clientTableChanged, this, &HostWindow::refreshPlayerTable);
 
-} // namespace
+    refreshTimer_ = new QTimer(this);
+    refreshTimer_->setInterval(1000);
+    connect(refreshTimer_, &QTimer::timeout, this, &HostWindow::refreshPlayerTable);
+    refreshTimer_->start();
 
-HostWindow::HostWindow(config::Config& config, QWidget* parent)
-    : QWidget(parent), config_(config) {
-    auto* rootLayout = new QVBoxLayout(this);
-    rootLayout->setContentsMargins(24, 18, 24, 18);
-    rootLayout->setSpacing(12);
+    refreshCaptureSources();
+}
 
-    auto* header = new QHBoxLayout();
-    auto* title = new QLabel(QStringLiteral("HOST A GAME"), this);
-    title->setFont(headerFont(18));
-    auto* backButton = new QPushButton(QStringLiteral("< Back"), this);
-    header->addWidget(title);
-    header->addStretch(1);
-    header->addWidget(backButton);
-    rootLayout->addLayout(header);
-    connect(backButton, &QPushButton::clicked, this, &HostWindow::backToHomeRequested);
+HostWindow::~HostWindow() { stopIfHosting(); }
 
-    // --- Settings group -----------------------------------------------------
-    auto* settingsBox = new QGroupBox(QStringLiteral("Stream settings"), this);
-    auto* form = new QFormLayout(settingsBox);
+void HostWindow::buildUi() {
+    auto* root = new QHBoxLayout(this);
 
-    gameEdit_ = new QLineEdit(settingsBox);
-    gameEdit_->setPlaceholderText(QStringLiteral("e.g. Rayman Legends"));
-    form->addRow(QStringLiteral("Game:"), gameEdit_);
+    // ---------------- left: setup ----------------
+    auto* setupBox = new QGroupBox(tr("Host a session"));
+    auto* setupLay = new QVBoxLayout(setupBox);
 
-    captureCombo_ = new QComboBox(settingsBox);
-    captureCombo_->addItem(QStringLiteral("Game window (preferred)"));
-    captureCombo_->addItem(QStringLiteral("Entire monitor (fallback)"));
-    form->addRow(QStringLiteral("Capture:"), captureCombo_);
+    setupLay->addWidget(new QLabel(tr("Your name:")));
+    auto* nameEdit = new QLineEdit(QString::fromStdString(cfg_.profile.name));
+    setupLay->addWidget(nameEdit);
 
-    resolutionCombo_ = new QComboBox(settingsBox);
-    for (const auto& r : common::Resolution::presets()) {
-        resolutionCombo_->addItem(QString::fromStdString(r.toString()));
+    setupLay->addWidget(new QLabel(tr("Connection mode:")));
+    modeCombo_ = new QComboBox;
+    modeCombo_->addItem(tr("LAN / direct (IP + code)"));
+    modeCombo_->addItem(tr("Internet (signaling server, no port forwarding)"));
+    setupLay->addWidget(modeCombo_);
+    serverEdit_ = new QLineEdit("play.example.com");
+    serverEdit_->setPlaceholderText("signaling server address");
+    serverEdit_->setVisible(false);
+    setupLay->addWidget(serverEdit_);
+    connect(modeCombo_, &QComboBox::currentIndexChanged, this, [this](int idx) {
+        serverEdit_->setVisible(idx == 1);
+    });
+
+    setupLay->addWidget(new QLabel(tr("Game:")));
+    gameEdit_ = new QLineEdit("Rayman Legends");
+    setupLay->addWidget(gameEdit_);
+
+    setupLay->addWidget(new QLabel(tr("Capture source:")));
+    sourceCombo_ = new QComboBox;
+    setupLay->addWidget(sourceCombo_);
+    auto* rescanButton = new QPushButton(tr("Rescan windows"));
+    connect(rescanButton, &QPushButton::clicked, this, &HostWindow::refreshCaptureSources);
+    setupLay->addWidget(rescanButton);
+
+    auto* resRow = new QHBoxLayout;
+    resolutionCombo_ = new QComboBox;
+    for (const char* r : { "1280x720", "1920x1080", "2560x1440", "3840x2160" }) {
+        resolutionCombo_->addItem(r);
     }
-    form->addRow(QStringLiteral("Resolution:"), resolutionCombo_);
+    resolutionCombo_->setCurrentIndex(1);
+    fpsCombo_ = new QComboBox;
+    fpsCombo_->addItem("30");
+    fpsCombo_->addItem("60");
+    fpsCombo_->addItem("120");
+    fpsCombo_->setCurrentIndex(1);
+    resRow->addWidget(resolutionCombo_);
+    resRow->addWidget(fpsCombo_);
+    setupLay->addLayout(resRow);
 
-    fpsCombo_ = new QComboBox(settingsBox);
-    for (int f : common::fpsPresets()) {
-        fpsCombo_->addItem(QString::number(f) + QStringLiteral(" FPS"));
-    }
-    form->addRow(QStringLiteral("Frame rate:"), fpsCombo_);
+    codecCombo_ = new QComboBox;
+    codecCombo_->addItem(tr("H.264 (best compatibility)"));
+    codecCombo_->addItem(tr("H.265 / HEVC"));
+    setupLay->addWidget(codecCombo_);
 
-    codecCombo_ = new QComboBox(settingsBox);
-    codecCombo_->addItem(QStringLiteral("H.264 (compatibility default)"));
-    codecCombo_->addItem(QStringLiteral("HEVC / H.265"));
-    codecCombo_->addItem(QStringLiteral("AV1"));
-    form->addRow(QStringLiteral("Codec:"), codecCombo_);
-
-    bitrateSpin_ = new QSpinBox(settingsBox);
+    auto* brRow = new QHBoxLayout;
+    bitrateSpin_ = new QSpinBox;
     bitrateSpin_->setRange(2, 50);
-    bitrateSpin_->setSuffix(QStringLiteral(" Mbps"));
-    bitrateSpin_->setValue(config_.video.bitrateMbps);
-    form->addRow(QStringLiteral("Bitrate:"), bitrateSpin_);
+    bitrateSpin_->setValue(cfg_.video.bitrateMbps);
+    bitrateSpin_->setSuffix(" Mbps");
+    brRow->addWidget(bitrateSpin_);
+    audioCheck_ = new QCheckBox(tr("Stream audio"));
+    audioCheck_->setChecked(true);
+    brRow->addWidget(audioCheck_);
+    setupLay->addLayout(brRow);
 
-    portSpin_ = new QSpinBox(settingsBox);
-    portSpin_->setRange(1024, 65535);
-    portSpin_->setValue(config_.network.listenPort);
-    form->addRow(QStringLiteral("Listen port:"), portSpin_);
-
-    rootLayout->addWidget(settingsBox);
-
-    // --- Session controls ---------------------------------------------------
-    startButton_ = new QPushButton(QStringLiteral("START HOSTING"), this);
-    startButton_->setMinimumHeight(40);
-    stopButton_ = new QPushButton(QStringLiteral("STOP HOSTING"), this);
-    stopButton_->setMinimumHeight(40);
-    stopButton_->setVisible(false);
-
-    codeLabel_ = new QLabel(this);
-    codeLabel_->setFont(headerFont(26));
-    codeLabel_->setAlignment(Qt::AlignCenter);
-    codeLabel_->setStyleSheet(QStringLiteral("color:#42a0ff;"));
-    codeLabel_->setVisible(false);
-
-    addressLabel_ = new QLabel(this);
-    addressLabel_->setAlignment(Qt::AlignCenter);
-    addressLabel_->setWordWrap(true);
-    addressLabel_->setVisible(false);
-
-    rootLayout->addWidget(startButton_);
-    rootLayout->addWidget(stopButton_);
-    rootLayout->addWidget(codeLabel_);
-    rootLayout->addWidget(addressLabel_);
-
-    // --- Player table -------------------------------------------------------
-    auto* playersBox = new QGroupBox(QStringLiteral("Connected players"), this);
-    auto* playersLayout = new QVBoxLayout(playersBox);
-    table_ = new QTableWidget(0, 5, playersBox);
-    table_->setHorizontalHeaderLabels({QStringLiteral("Player"), QStringLiteral("Name"),
-                                       QStringLiteral("Controller"), QStringLiteral("Latency"),
-                                       QStringLiteral("Status")});
-    table_->horizontalHeader()->setStretchLastSection(true);
-    table_->verticalHeader()->setVisible(false);
-    table_->setEditTriggers(QAbstractItemView::NoEditTriggers);
-    table_->setSelectionBehavior(QAbstractItemView::SelectRows);
-    table_->setMinimumHeight(140);
-    playersLayout->addWidget(table_);
-
-    auto* rowButtons = new QHBoxLayout();
-    kickButton_ = new QPushButton(QStringLiteral("KICK"), playersBox);
-    inputButton_ = new QPushButton(QStringLiteral("DISABLE INPUT"), playersBox);
-    rowButtons->addWidget(kickButton_);
-    rowButtons->addWidget(inputButton_);
-    rowButtons->addStretch(1);
-    playersLayout->addLayout(rowButtons);
-    rootLayout->addWidget(playersBox, 1);
-
-    // --- Log ---------------------------------------------------------------
-    logView_ = new QPlainTextEdit(this);
-    logView_->setReadOnly(true);
-    logView_->setMaximumBlockCount(400);
-    logView_->setMaximumHeight(120);
-    rootLayout->addWidget(logView_);
-
-    pollTimer_ = new QTimer(this);
-    pollTimer_->setInterval(500);
-    connect(pollTimer_, &QTimer::timeout, this, &HostWindow::refreshPlayerTable);
-
+    startButton_ = new QPushButton(tr("Start hosting"));
+    startButton_->setObjectName("primary");
     connect(startButton_, &QPushButton::clicked, this, &HostWindow::startHosting);
+    setupLay->addWidget(startButton_);
+
+    stopButton_ = new QPushButton(tr("Stop"));
+    stopButton_->setEnabled(false);
     connect(stopButton_, &QPushButton::clicked, this, &HostWindow::stopHosting);
+    setupLay->addWidget(stopButton_);
+
+    backButton_ = new QPushButton(tr("Back"));
+    connect(backButton_, &QPushButton::clicked, this, [this] {
+        stopIfHosting();
+        emit backToHomeRequested();
+    });
+    setupLay->addWidget(backButton_);
+    setupLay->addStretch(1);
+    root->addWidget(setupBox, 1);
+
+    // ---------------- right: session ----------------
+    auto* sessionBox = new QGroupBox(tr("Session"));
+    auto* sessionLay = new QVBoxLayout(sessionBox);
+
+    codeLabel_ = new QLabel(tr("not hosting"));
+    codeLabel_->setObjectName("sessionCode");
+    sessionLay->addWidget(codeLabel_);
+
+    addressLabel_ = new QLabel("-");
+    sessionLay->addWidget(addressLabel_);
+    gamepadLabel_ = new QLabel("-");
+    gamepadLabel_->setWordWrap(true);
+    sessionLay->addWidget(gamepadLabel_);
+
+    playersTable_ = new QTableWidget(0, 4);
+    playersTable_->setHorizontalHeaderLabels({ tr("Player"), tr("Ping"), tr("Input"), tr("State") });
+    playersTable_->horizontalHeader()->setStretchLastSection(true);
+    playersTable_->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    playersTable_->setSelectionBehavior(QAbstractItemView::SelectRows);
+    sessionLay->addWidget(playersTable_);
+
+    auto* actRow = new QHBoxLayout;
+    kickButton_ = new QPushButton(tr("Kick"));
     connect(kickButton_, &QPushButton::clicked, this, &HostWindow::kickSelected);
+    inputButton_ = new QPushButton(tr("Toggle input"));
     connect(inputButton_, &QPushButton::clicked, this, &HostWindow::toggleInputSelected);
+    actRow->addWidget(kickButton_);
+    actRow->addWidget(inputButton_);
+    sessionLay->addLayout(actRow);
 
-    wireSessionEvents();
+    statsLabel_ = new QLabel;
+    statsLabel_->setWordWrap(true);
+    sessionLay->addWidget(statsLabel_);
 
-    // Initial form values from config.
-    resolutionCombo_->setCurrentIndex(
-        [this]() {
-            const std::string r = config_.video.resolution.toString();
-            for (int i = 0; i < resolutionCombo_->count(); ++i) {
-                if (resolutionCombo_->itemText(i).toStdString() == r) return i;
-            }
-            return 1; // 1920x1080 default
-        }());
-    const int fpsIndex = [this]() {
-        const auto& presets = common::fpsPresets();
-        for (size_t i = 0; i < presets.size(); ++i) {
-            if (presets[i] == config_.video.fps) return static_cast<int>(i);
-        }
-        return 1; // 60 default
-    }();
-    fpsCombo_->setCurrentIndex(fpsIndex);
-    switch (config_.video.codec) {
-        case common::VideoCodec::Hevc: codecCombo_->setCurrentIndex(1); break;
-        case common::VideoCodec::Av1: codecCombo_->setCurrentIndex(2); break;
-        case common::VideoCodec::H264:
-        default: codecCombo_->setCurrentIndex(0); break;
-    }
+    auto* abrRow = new QHBoxLayout;
+    abrCheck_ = new QCheckBox(tr("Adaptive bitrate"));
+    abrCheck_->setChecked(true);
+    connect(abrCheck_, &QCheckBox::toggled, this, &HostWindow::onAbrToggled);
+    bitrateSlider_ = new QSlider(Qt::Horizontal);
+    bitrateSlider_->setRange(2, 50);
+    bitrateSlider_->setValue(cfg_.video.bitrateMbps);
+    connect(bitrateSlider_, &QSlider::valueChanged, this, &HostWindow::onManualBitrate);
+    abrRow->addWidget(abrCheck_, 1);
+    abrRow->addWidget(new QLabel(tr("manual:")));
+    abrRow->addWidget(bitrateSlider_, 1);
+    sessionLay->addLayout(abrRow);
+
+    logView_ = new QTextEdit;
+    logView_->setReadOnly(true);
+    logView_->setMaximumHeight(140);
+    sessionLay->addWidget(logView_);
+
+    root->addWidget(sessionBox, 2);
+    setLayout(root);
 }
 
-void HostWindow::wireSessionEvents() {
-    host::HostSession::Events ev;
-
-    // All events arrive on the network thread -> marshal to the UI thread.
-    ev.onApprovalRequest = [this](uint32_t id, const std::string& name) {
-        QMetaObject::invokeMethod(this,
-                                  [this, id, name] {
-                                      showApprovalDialog(id, QString::fromStdString(name));
-                                  },
-                                  Qt::QueuedConnection);
-    };
-    ev.onLog = [this](rp::log::Level level, const std::string& message) {
-        QMetaObject::invokeMethod(this,
-                                  [this, level, message] {
-                                      QString prefix;
-                                      switch (level) {
-                                          case rp::log::Level::Trace: prefix = QStringLiteral("[TRACE]"); break;
-                                          case rp::log::Level::Debug: prefix = QStringLiteral("[DEBUG]"); break;
-                                          case rp::log::Level::Info: prefix = QStringLiteral("[INFO]"); break;
-                                          case rp::log::Level::Warning: prefix = QStringLiteral("[WARNING]"); break;
-                                          case rp::log::Level::Error: prefix = QStringLiteral("[ERROR]"); break;
-                                          case rp::log::Level::Critical: prefix = QStringLiteral("[CRITICAL]"); break;
-                                      }
-                                      appendLog(prefix + QStringLiteral(" ") +
-                                                QString::fromStdString(message));
-                                  },
-                                  Qt::QueuedConnection);
-    };
-    app_.setEvents(std::move(ev));
-}
-
-host::HostLaunchSettings HostWindow::collectSettings() const {
-    host::HostLaunchSettings s;
-    s.gameName = gameEdit_->text().trimmed().toStdString();
-    s.captureMode = captureCombo_->currentIndex() == 1 ? common::CaptureMode::Monitor
-                                                       : common::CaptureMode::Window;
-    if (const auto r = common::Resolution::parse(resolutionCombo_->currentText().toStdString())) {
-        s.resolution = *r;
-    } else {
-        s.resolution = common::Resolution{1920, 1080};
+void HostWindow::refreshCaptureSources() {
+    sourceCombo_->clear();
+    // Visible windows (window capture = default, best for games).
+    for (const auto& w : listCaptureWindows()) {
+        const QString title = QString::fromWCharArray(w.title.c_str()) + "  [" +
+                              QString::fromWCharArray(w.processExe.c_str()) + "]";
+        sourceCombo_->addItem(title, QVariant::fromValue<void*>(w.hwnd));
     }
-    s.fps = common::fpsPresets()[static_cast<size_t>(
-        qBound(0, fpsCombo_->currentIndex(), static_cast<int>(common::fpsPresets().size()) - 1))];
-    s.bitrateKbps = static_cast<uint32_t>(bitrateSpin_->value()) * 1000;
-    switch (codecCombo_->currentIndex()) {
-        case 1: s.codec = common::VideoCodec::Hevc; break;
-        case 2: s.codec = common::VideoCodec::Av1; break;
-        default: s.codec = common::VideoCodec::H264; break;
+    // Full monitors.
+    for (const auto& o : enumerateOutputs()) {
+        const QString name = tr("Monitor %1 (%2x%3)").arg(o.index + 1).arg(o.width).arg(o.height);
+        sourceCombo_->addItem(name, QVariant::fromValue<void*>(nullptr));
     }
-    s.listenPort = static_cast<uint16_t>(portSpin_->value());
-    s.requireApproval = config_.input.requireHostApproval;
-    s.inputDefaults = common::InputPermissions{config_.input.controller, config_.input.keyboard,
-                                               config_.input.mouse, config_.input.vibration};
-    return s;
 }
 
 void HostWindow::startHosting() {
-    auto settings = collectSettings();
-    if (settings.gameName.empty()) {
-        settings.gameName = "Desktop"; // streaming-the-current-window scenario
+    HostLaunchSettings s;
+    s.gameName = gameEdit_->text().toStdString();
+    s.resolution.width = 1920;
+    s.resolution.height = 1080;
+    const QString res = resolutionCombo_->currentText();
+    const int wx = res.indexOf('x');
+    if (wx > 0) {
+        s.resolution.width = res.left(wx).toInt();
+        s.resolution.height = res.mid(wx + 1).toInt();
     }
+    s.fps = static_cast<uint32_t>(fpsCombo_->currentText().toInt());
+    s.bitrateKbps = static_cast<uint32_t>(bitrateSpin_->value()) * 1000;
+    s.codec = codecCombo_->currentIndex() == 1 ? common::VideoCodec::Hevc : common::VideoCodec::H264;
+    s.audioEnabled = audioCheck_->isChecked();
+    s.audioBitrateKbps = cfg_.audio.bitrateKbps;
 
-    // HostApp::start() passes the stored events to the fresh HostSession, so
-    // the wiring done in wireSessionEvents() stays valid across restarts.
-    if (!app_.start(settings)) {
-        appendLog(QStringLiteral("[ERROR] Could not start hosting (port %1 unavailable).")
-                      .arg(settings.listenPort));
+    const QVariant source = sourceCombo_->currentData();
+    s.windowHwnd = source.value<void*>();
+    s.captureMode = s.windowHwnd ? common::CaptureMode::Window : common::CaptureMode::Monitor;
+    // Monitor index = rows after the windows; keep simple: window rows first.
+    s.outputIndex = s.windowHwnd ? 0 : (sourceCombo_->currentIndex() - sourceCombo_->count() + 1);
+
+    QString err;
+    bool ok = false;
+    if (modeCombo_->currentIndex() == 1) {
+        ok = coordinator_->startInternet(s, serverEdit_->text(), 9000, &err);
+    } else {
+        ok = coordinator_->startLan(s, &err);
+    }
+    if (!ok) {
+        QMessageBox::warning(this, tr("RemotePlay"), err.isEmpty() ? tr("Could not start hosting.") : err);
         return;
     }
-
     setHostingUi(true);
-    codeLabel_->setText(QString::fromStdString(app_.sessionCode()));
-
-    QString addresses = QStringLiteral("Give your friend:  <b>IP:port + session code</b><br>");
-    const auto ips = paths::localIPv4Addresses();
-    QStringList shown;
-    for (const auto& ip : ips) shown << QString::fromStdString(ip);
-    if (shown.isEmpty()) shown << QStringLiteral("127.0.0.1");
-    addresses += QStringLiteral("This PC: %1:%2").arg(shown.join(QStringLiteral(", ")),
-                                                      QString::number(app_.port()));
-    addresses += QStringLiteral("<br><i>Signaling-based code-only joins arrive with the "
-                                "networking phase (see docs/ROADMAP.md).</i>");
-    addressLabel_->setText(addresses);
-
-    appendLog(QStringLiteral("[INFO] Session created. Code: %1")
-                  .arg(QString::fromStdString(app_.sessionCode())));
-    refreshPlayerTable();
-    pollTimer_->start();
 }
 
 void HostWindow::stopHosting() {
-    app_.stop();
+    coordinator_->stop();
     setHostingUi(false);
-    pollTimer_->stop();
-    table_->setRowCount(0);
-    appendLog(QStringLiteral("[INFO] Hosting stopped."));
+    appendLog(tr("Session stopped."));
 }
 
 void HostWindow::stopIfHosting() {
-    if (app_.hosting()) {
-        stopHosting();
+    if (coordinator_ && coordinator_->hosting()) {
+        coordinator_->stop();
+        setHostingUi(false);
     }
 }
 
 void HostWindow::setHostingUi(bool hosting) {
-    startButton_->setVisible(!hosting);
-    stopButton_->setVisible(hosting);
-    codeLabel_->setVisible(hosting);
-    addressLabel_->setVisible(hosting);
+    startButton_->setEnabled(!hosting);
+    stopButton_->setEnabled(hosting);
+    modeCombo_->setEnabled(!hosting);
+    serverEdit_->setEnabled(!hosting);
     gameEdit_->setEnabled(!hosting);
-    captureCombo_->setEnabled(!hosting);
-    resolutionCombo_->setEnabled(!hosting);
-    fpsCombo_->setEnabled(!hosting);
-    codecCombo_->setEnabled(!hosting);
-    bitrateSpin_->setEnabled(!hosting);
-    portSpin_->setEnabled(!hosting);
+    sourceCombo_->setEnabled(!hosting);
 }
 
-void HostWindow::showApprovalDialog(uint32_t clientId, const QString& playerName) {
-    auto* dialog = new QDialog(this);
-    dialog->setWindowTitle(QStringLiteral("Join request"));
-    dialog->setModal(true);
-
-    auto* label = new QLabel(
-        QStringLiteral("<b>%1</b> wants to join your session.").arg(playerName), dialog);
-    label->setAlignment(Qt::AlignCenter);
-
-    auto* countdown = new QLabel(QStringLiteral("Auto-reject in 60 s"), dialog);
-    countdown->setAlignment(Qt::AlignCenter);
-
-    auto* accept = new QPushButton(QStringLiteral("ACCEPT"), dialog);
-    auto* reject = new QPushButton(QStringLiteral("REJECT"), dialog);
-    accept->setMinimumHeight(34);
-    reject->setMinimumHeight(34);
-
-    auto* buttons = new QHBoxLayout();
-    buttons->addWidget(accept);
-    buttons->addWidget(reject);
-
-    auto* layout = new QVBoxLayout(dialog);
-    layout->addWidget(label);
-    layout->addWidget(countdown);
-    layout->addLayout(buttons);
-
-    QObject::connect(accept, &QPushButton::clicked, dialog, [this, dialog, clientId]() {
-        app_.approve(clientId, true);
-        dialog->accept();
-    });
-    QObject::connect(reject, &QPushButton::clicked, dialog, [this, dialog, clientId]() {
-        app_.approve(clientId, false);
-        dialog->reject();
-    });
-
-    // Auto-reject after the timeout (matches the session's approval window).
-    // secondsLeft lives in a shared_ptr so the timer can never dangle.
-    auto secondsLeft = std::make_shared<int>(60);
-    auto* timer = new QTimer(dialog);
-    timer->setInterval(1000);
-    QObject::connect(timer, &QTimer::timeout, dialog,
-                     [this, dialog, clientId, countdown, timer, secondsLeft]() {
-                         --(*secondsLeft);
-                         if (*secondsLeft <= 0) {
-                             timer->stop();
-                             app_.approve(clientId, false);
-                             dialog->reject();
-                             return;
-                         }
-                         countdown->setText(
-                             QStringLiteral("Auto-reject in %1 s").arg(*secondsLeft));
-                     });
-
-    timer->start();
-    dialog->setAttribute(Qt::WA_DeleteOnClose);
-    dialog->show();
-    dialog->raise();
-    dialog->activateWindow();
+void HostWindow::onStateChanged() {
+    const auto st = coordinator_->uiState();
+    if (!st.sessionCode.isEmpty()) {
+        QString where = st.internetMode ? tr("via %1").arg(st.serverAddress) : tr("LAN port %1").arg(st.tcpPort);
+        codeLabel_->setText(st.sessionCode);
+        addressLabel_->setText(where);
+    } else {
+        codeLabel_->setText(tr("not hosting"));
+        addressLabel_->setText("-");
+    }
+    gamepadLabel_->setText(tr("Virtual gamepads: %1").arg(st.gamepadStatus.isEmpty() ? "-" : st.gamepadStatus));
+    statsLabel_->setText(
+        tr("Encoder: %1   FPS: %2   Capture: %3 ms   Encode: %4 ms\n"
+           "Send: %5 Mbps (target %6)   Ping: %7 ms   Loss: %8%   Jitter: %9 ms")
+            .arg(st.encoderName.isEmpty() ? "-" : st.encoderName)
+            .arg(st.fps, 0, 'f', 0)
+            .arg(st.captureMs, 0, 'f', 1)
+            .arg(st.encodeMs, 0, 'f', 1)
+            .arg(st.bitrateKbps / 1000.0, 0, 'f', 1)
+            .arg(st.bitrateTarget / 1000.0, 0, 'f', 1)
+            .arg(st.rttMs, 0, 'f', 0)
+            .arg(st.lossPercent, 0, 'f', 1)
+            .arg(st.jitterMs, 0, 'f', 1));
 }
 
 void HostWindow::refreshPlayerTable() {
-    const auto rows = app_.clients();
-    table_->setRowCount(static_cast<int>(rows.size()));
-    int row = 0;
-    for (const auto& r : rows) {
-        auto* idItem = new QTableWidgetItem(QString::number(r.id));
-        auto* nameItem = new QTableWidgetItem(QString::fromStdString(r.name));
-        auto* padItem = new QTableWidgetItem(
-            QStringLiteral("- (controller support: Phase 8)"));
-        auto* latencyItem = new QTableWidgetItem(
-            r.state == common::ConnectionState::Connected
-                ? QStringLiteral("%1 ms").arg(r.rttMs)
-                : QStringLiteral("-"));
-        auto* stateItem = new QTableWidgetItem(stateToText(r.state));
-        idItem->setFlags(idItem->flags() & ~Qt::ItemIsEditable);
-        nameItem->setFlags(nameItem->flags() & ~Qt::ItemIsEditable);
-        padItem->setFlags(padItem->flags() & ~Qt::ItemIsEditable);
-        latencyItem->setFlags(latencyItem->flags() & ~Qt::ItemIsEditable);
-        stateItem->setFlags(stateItem->flags() & ~Qt::ItemIsEditable);
-        table_->setItem(row, 0, idItem);
-        table_->setItem(row, 1, nameItem);
-        table_->setItem(row, 2, padItem);
-        table_->setItem(row, 3, latencyItem);
-        table_->setItem(row, 4, stateItem);
-        ++row;
-    }
-
-    // Reflect the selected row's input state on the toggle button.
-    const int selected = table_->currentRow();
-    if (selected >= 0 && selected < static_cast<int>(rows.size())) {
-        inputButton_->setText(rows[static_cast<size_t>(selected)].inputEnabled
-                                  ? QStringLiteral("DISABLE INPUT")
-                                  : QStringLiteral("ENABLE INPUT"));
+    const auto rows = coordinator_->clients();
+    playersTable_->setRowCount(static_cast<int>(rows.size()));
+    int r = 0;
+    for (const auto& c : rows) {
+        auto* nameItem = new QTableWidgetItem(QString::fromStdString(c.name));
+        auto* pingItem = new QTableWidgetItem(c.rttMs ? QString::number(c.rttMs) + " ms" : "-");
+        auto* inputItem = new QTableWidgetItem(c.inputEnabled ? tr("on") : tr("off"));
+        auto* stateItem = new QTableWidgetItem(QString::fromStdString(common::toString(c.state)));
+        playersTable_->setItem(r, 0, nameItem);
+        playersTable_->setItem(r, 1, pingItem);
+        playersTable_->setItem(r, 2, inputItem);
+        playersTable_->setItem(r, 3, stateItem);
+        ++r;
     }
 }
 
 void HostWindow::kickSelected() {
-    const int row = table_->currentRow();
-    if (row < 0 || row >= table_->rowCount()) return;
-    const uint32_t id = table_->item(row, 0)->text().toUInt();
-    app_.kick(id);
-}
-
-void HostWindow::toggleInputSelected() {
-    const int row = table_->currentRow();
-    if (row < 0 || row >= table_->rowCount()) return;
-    const uint32_t id = table_->item(row, 0)->text().toUInt();
-    const auto rows = app_.clients();
-    for (const auto& r : rows) {
-        if (r.id == id) {
-            app_.setClientInputEnabled(id, !r.inputEnabled);
-            return;
-        }
+    const int row = playersTable_->currentRow();
+    if (row < 0) return;
+    const auto rows = coordinator_->clients();
+    if (row < static_cast<int>(rows.size())) {
+        coordinator_->kick(rows[row].id);
     }
 }
 
-void HostWindow::appendLog(const QString& line) { logView_->appendPlainText(line); }
+void HostWindow::toggleInputSelected() {
+    const int row = playersTable_->currentRow();
+    if (row < 0) return;
+    const auto rows = coordinator_->clients();
+    if (row < static_cast<int>(rows.size())) {
+        coordinator_->setClientInput(rows[row].id, !rows[row].inputEnabled);
+    }
+}
+
+void HostWindow::onApprovalRequest(uint32_t clientId, const QString& name) {
+    QMessageBox box(this);
+    box.setWindowTitle(tr("Player wants to join"));
+    box.setText(tr("%1 requests to join your session.").arg(name));
+    box.setStandardButtons(QMessageBox::Yes | QMessageBox::No);
+    box.button(QMessageBox::Yes)->setText(tr("Accept"));
+    box.button(QMessageBox::No)->setText(tr("Reject"));
+    box.setDefaultButton(QMessageBox::Yes);
+    QTimer::singleShot(60000, &box, [&box] { if (box.isVisible()) box.reject(); });
+    const auto choice = box.exec();
+    coordinator_->approve(clientId, choice == QMessageBox::Yes);
+}
+
+void HostWindow::onEncoderTrouble(const QString& message) {
+    QMessageBox box(this);
+    box.setWindowTitle(tr("Streaming problem"));
+    box.setText(message);
+    box.addButton(tr("Restart encoder"), QMessageBox::AcceptRole);
+    box.addButton(tr("Switch to software"), QMessageBox::ActionRole);
+    box.addButton(tr("Ignore"), QMessageBox::RejectRole);
+    switch (box.exec()) {
+        case 0: coordinator_->restartEncoders(); break;
+        case 1: coordinator_->switchEncodersToSoftware(); break;
+        default: break;
+    }
+}
+
+void HostWindow::onManualBitrate(int mbps) {
+    if (abrCheck_->isChecked()) abrCheck_->setChecked(false);   // manual = off ABR
+    coordinator_->setManualBitrate(mbps * 1000);
+}
+
+void HostWindow::onAbrToggled(bool on) {
+    coordinator_->setAbrEnabled(on);
+}
+
+void HostWindow::appendLog(const QString& line) {
+    logView_->append(line);
+}
 
 } // namespace rp::ui

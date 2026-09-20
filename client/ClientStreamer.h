@@ -60,6 +60,7 @@ public:
 
     [[nodiscard]] ClientStreamStats stats() const;
     [[nodiscard]] bool running() const { return running_.load(); }
+    [[nodiscard]] net::UdpTransport& udpTransport() { return *transport_; }
 
     void setVideoJitterTargetMs(unsigned ms) { if (transport_) transport_->setVideoJitterTargetMs(ms); }
 
