@@ -1,0 +1,16 @@
+# Normalize line endings; keep sources LF, Windows scripts CRLF.
+* text=auto
+
+*.cpp text
+*.h text
+*.hpp text
+*.md text
+*.txt text
+*.cmake text
+CMakeLists.txt text
+*.yml text
+*.gitignore text
+*.gitattributes text
+
+*.ps1 text eol=crlf
+*.bat text eol=crlf

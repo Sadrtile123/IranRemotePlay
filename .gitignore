@@ -1,0 +1,36 @@
+# Build directories
+build/
+build-*/
+out/
+bin/
+obj/
+
+# IDE / tooling
+.vs/
+.vscode/
+.idea/
+*.user
+*.suo
+CMakeUserPresets.json
+.cache/
+
+# Logs and local runtime data
+Logs/
+*.log
+
+# Compiled artifacts
+*.obj
+*.o
+*.lib
+*.a
+*.pdb
+*.ilk
+*.exe
+*.dll
+
+# OS junk
+Thumbs.db
+.DS_Store
+
+# Local downloads scratch (not part of the repo)
+.downloads/
