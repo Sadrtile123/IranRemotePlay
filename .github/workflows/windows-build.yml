@@ -40,6 +40,7 @@ jobs:
 
       # FFmpeg shared build (headers + import libs + DLLs).
       - name: Download FFmpeg (win64 shared)
+        id: ffmpeg
         shell: pwsh
         run: |
           $ff = "$env:RUNNER_TEMP\ffmpeg"
@@ -68,6 +69,8 @@ jobs:
 
           $qtPrefix = "${{ steps.qt.outputs.prefix }}"
           $ffDir = "${{ steps.ffmpeg.outputs.dir }}"
+          if (-not $ffDir) { Write-Error "steps.ffmpeg.outputs.dir is empty - FFmpeg step id missing or failed"; exit 1 }
+          Write-Host "FFmpeg dir: $ffDir"
           $cmd = "`"$vcvars`" && " +
                  "cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release " +
                  "`"-DCMAKE_PREFIX_PATH=$qtPrefix`" " +
@@ -99,15 +102,19 @@ jobs:
 
           # VC++ runtime: the MSVC-built exe and Qt DLLs link it dynamically
           # (vcruntime140.dll / msvcp140.dll are NOT guaranteed on a clean
-          # Windows install). Copy the redistributable DLLs from the VS CRT
-          # directory so the package is fully self-contained.
+          # Windows install). Search the VS redistributable for the x64 CRT
+          # DLLs (folder name varies by VS version: VC143, VC145, ...) and
+          # copy them so the package is fully self-contained.
           $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
           $vsPath = & $vswhere -latest -products * `
                     -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 `
                     -property installationPath
-          $crtDir = Get-ChildItem -Directory (Join-Path $vsPath "VC\Redist\MSVC") |
-                    Sort-Object Name -Descending | Select-Object -First 1
-          $crt = Join-Path $crtDir "x64\Microsoft.VC143.CRT"
+          $redistRoot = Join-Path $vsPath "VC\Redist\MSVC"
+          $msvcp = Get-ChildItem -Recurse -Filter msvcp140.dll $redistRoot -ErrorAction SilentlyContinue |
+                   Where-Object { $_.FullName -match "\\x64\\" } |
+                   Select-Object -First 1
+          if (-not $msvcp) { Write-Error "x64 msvcp140.dll not found under $redistRoot"; exit 1 }
+          $crt = $msvcp.Directory.FullName
           Write-Host "VC++ redist source: $crt"
           Copy-Item "$crt\msvcp140.dll","$crt\vcruntime140.dll","$crt\vcruntime140_1.dll" "$out\"
 
