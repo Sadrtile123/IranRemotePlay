@@ -37,18 +37,33 @@ jobs:
           Write-Host "Qt root: $qtRoot"
           "prefix=$qtRoot" | Add-Content -Path $env:GITHUB_OUTPUT -Encoding utf8
 
-      - name: Configure (MSVC, VS 2022 generator)
-        run: cmake -S . -B build -G "Visual Studio 17 2022" -A x64 "-DCMAKE_PREFIX_PATH=${{ steps.qt.outputs.prefix }}"
+      # Self-contained MSVC build: locate VS via vswhere, enter the x64
+      # environment, then configure/build/test with Ninja in one cmd session.
+      - name: Configure, build, test (MSVC x64 + Ninja)
+        shell: pwsh
+        run: |
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          if (-not (Test-Path $vswhere)) { Write-Error "vswhere.exe not found"; exit 1 }
+          $vsPath = & $vswhere -latest -products * `
+                    -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 `
+                    -property installationPath
+          if (-not $vsPath) { Write-Error "No VS instance with C++ tools found"; exit 1 }
+          Write-Host "Visual Studio: $vsPath"
+          $vcvars = Join-Path $vsPath "VC\Auxiliary\Build\vcvars64.bat"
+          if (-not (Test-Path $vcvars)) { Write-Error "vcvars64.bat not found"; exit 1 }
 
-      - name: Build (Release)
-        run: cmake --build build --config Release
-
-      - name: Test
-        run: ctest --test-dir build -C Release --output-on-failure
+          $qtPrefix = "${{ steps.qt.outputs.prefix }}"
+          $cmd = "`"$vcvars`" && " +
+                 "cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release " +
+                 "`"-DCMAKE_PREFIX_PATH=$qtPrefix`" && " +
+                 "cmake --build build --parallel && " +
+                 "ctest --test-dir build --output-on-failure"
+          cmd /d /c $cmd
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
           name: RemotePlay-windows-x64
-          path: build/bin/Release/*.exe
+          path: build/bin/*.exe
           if-no-files-found: error
