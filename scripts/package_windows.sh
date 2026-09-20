@@ -22,8 +22,10 @@ for dll in Qt6Core.dll Qt6Gui.dll Qt6Widgets.dll; do
 done
 cp "$QTW/plugins/platforms/qwindows.dll" "$OUT/platforms/"
 cp "$QTW/plugins/styles/qmodernwindowsstyle.dll" "$OUT/styles/" 2>/dev/null || true
-for fmt in qico qgif qjpeg qsvg; do
-    cp "$QTW/plugins/imageformats/$fmt.dll" "$OUT/imageformats/" 2>/dev/null || true
+# NOTE: qsvg is intentionally NOT shipped - it needs Qt6Svg.dll which the app
+# does not otherwise require (no SVG is ever rendered).
+for fmt in qico qgif qjpeg; do
+    cp "$QTW/plugins/imageformats/$fmt.dll" "$OUT/imageformats/" || exit 1
 done
 
 # FFmpeg shared runtime
@@ -31,10 +33,22 @@ for dll in avcodec-63.dll avutil-61.dll swscale-10.dll swresample-7.dll; do
     cp "$FF/bin/$dll" "$OUT/"
 done
 
-# MinGW runtime (C++/threading)
-for dll in libgcc_s_seh-1.dll libstdc++-6.dll libwinpthread-1.dll; do
-    cp "$MINGW_LIB/$dll" "$OUT/" 2>/dev/null || true
+# MinGW runtime. CRITICAL: Qt's own MinGW-built DLLs (Qt6Core/Gui/Widgets,
+# qwindows, styles) dynamically import libgcc_s_seh-1.dll and libstdc++-6.dll.
+# The Qt distribution ships exactly matching copies in its own bin/ directory -
+# use those (the Debian cross toolchain only has import stubs, no real DLLs).
+# Fail HARD if any runtime DLL is missing: a silent skip here previously
+# produced the "libgcc_s_seh-1.dll was not found" launch error on user PCs.
+for dll in libgcc_s_seh-1.dll libstdc++-6.dll; do
+    if [ ! -f "$QTW/bin/$dll" ]; then
+        echo "FATAL: $QTW/bin/$dll not found" >&2; exit 1
+    fi
+    cp "$QTW/bin/$dll" "$OUT/"
 done
+if [ ! -f "$MINGW_LIB/libwinpthread-1.dll" ]; then
+    echo "FATAL: $MINGW_LIB/libwinpthread-1.dll not found" >&2; exit 1
+fi
+cp "$MINGW_LIB/libwinpthread-1.dll" "$OUT/"
 
 # Signaling server (optional deployment) + docs
 mkdir -p "$OUT/server/signaling-server"
@@ -46,43 +60,7 @@ cp "$ROOT/LICENSE" "$OUT/LICENSE"
 cp "$ROOT/docs/DEPLOYING.md" "$OUT/docs-DEPLOYING.md" 2>/dev/null || true
 cp "$ROOT/docs/BUILDING.md" "$OUT/docs-BUILDING.md" 2>/dev/null || true
 
-cat > "$OUT/RUN-THIS-FIRST.txt" <<'EOF'
-RemotePlay 0.1.1 - Windows 10/11 x64
-====================================
-
-WHAT'S NEW IN 0.1.1
-  * Fixed the "Stream start failed: no usable encoder (frame alloc failed)"
-    crash - streaming now starts.
-  * Fixed host freeze / "not responding" (dialog storm + thread deadlocks).
-  * F11 fullscreen now works (window-level, also double-click; Esc exits).
-  * New dark UI, stats grid, copy-code + open-logs buttons, recent hosts.
-  * Client shows a clear error if the host never starts the stream.
-
-QUICK START
-  1. Run RemotePlay.exe (no installation needed).
-  2. Host: pick your game window, choose LAN or Internet mode, share the code.
-  3. Join: enter the address + code, click Join.
-
-GAMEPADS (remote players appear as Xbox 360 controllers on the host)
-  Gamepad streaming needs the free ViGEmBus driver (one-time install):
-    https://github.com/nefarius/ViGEmBus/releases
-  Install it ONLY on the HOST PC. Without it, keyboard/mouse streaming still
-  works and RemotePlay tells you gamepads are unavailable.
-
-FOR PLAYING OVER THE INTERNET (no port forwarding)
-  Deploy the included signaling server on any VPS:
-    python3 server/signaling-server/server.py --port 9000
-  Hosts select "Internet mode" and enter your server address.
-  All media + input is end-to-end encrypted (AES-256-GCM); the server only
-  relays ciphertext.
-
-VERIFY YOUR INSTALL (optional, run from cmd):
-  tools\rp_tool_capturedump.exe 3     - tests screen capture
-  tools\rp_tool_encodetest.exe        - tests the video encoder
-
-Requires a GPU or CPU with H.264 encode (hardware encoders NVENC/AMF/QSV are
-used automatically when present; otherwise libx264).
-EOF
+cp "$ROOT/RUN-THIS-FIRST.txt" "$OUT/RUN-THIS-FIRST.txt"
 
 echo "Package contents:"
 (cd "$OUT" && ls -R | head -40)
@@ -92,3 +70,9 @@ ZIP=/home/z/my-project/download/RemotePlay-0.1.1-Windows-x64.zip
 rm -f "$ZIP"
 (cd /home/z/my-project/RemotePlay/dist && zip -qr "$ZIP" RemotePlay-Windows-x64)
 echo "ZIP: $ZIP ($(du -h "$ZIP" | cut -f1))"
+
+# Post-packaging dependency audit: every import of every binary must resolve
+# against the package or a Windows system DLL. Prevents regressions of the
+# missing-runtime-DLL class of bug from ever shipping again.
+echo "Running dependency audit..."
+python3 "$ROOT/scripts/audit_deps.py" || exit 1

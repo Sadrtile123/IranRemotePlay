@@ -91,12 +91,30 @@ jobs:
           Copy-Item "$qt\bin\Qt6Core.dll","$qt\bin\Qt6Gui.dll","$qt\bin\Qt6Widgets.dll" "$out\"
           Copy-Item "$qt\plugins\platforms\qwindows.dll" "$out\platforms\"
           if (Test-Path "$qt\plugins\styles") { Copy-Item "$qt\plugins\styles\*.dll" "$out\styles\" -ErrorAction SilentlyContinue }
-          Copy-Item "$qt\plugins\imageformats\*.dll" "$out\imageformats\" -ErrorAction SilentlyContinue
+          # qsvg is excluded on purpose: it requires Qt6Svg.dll which is not
+          # shipped (the app never renders SVG).
+          Get-ChildItem "$qt\plugins\imageformats\*.dll" |
+            Where-Object { $_.Name -ne "qsvg.dll" } |
+            Copy-Item -Destination "$out\imageformats\"
+
+          # VC++ runtime: the MSVC-built exe and Qt DLLs link it dynamically
+          # (vcruntime140.dll / msvcp140.dll are NOT guaranteed on a clean
+          # Windows install). Copy the redistributable DLLs from the VS CRT
+          # directory so the package is fully self-contained.
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $vsPath = & $vswhere -latest -products * `
+                    -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 `
+                    -property installationPath
+          $crtDir = Get-ChildItem -Directory (Join-Path $vsPath "VC\Redist\MSVC") |
+                    Sort-Object Name -Descending | Select-Object -First 1
+          $crt = Join-Path $crtDir "x64\Microsoft.VC143.CRT"
+          Write-Host "VC++ redist source: $crt"
+          Copy-Item "$crt\msvcp140.dll","$crt\vcruntime140.dll","$crt\vcruntime140_1.dll" "$out\"
 
           Copy-Item "$ff\bin\avcodec-*.dll","$ff\bin\avutil-*.dll","$ff\bin\swscale-*.dll","$ff\bin\swresample-*.dll" "$out\"
 
           Copy-Item server\signaling-server\server.py,server\signaling-server\test_server.py "$out\server\signaling-server\"
-          Copy-Item README.md,LICENSE "$out\"
+          Copy-Item README.md,LICENSE,RUN-THIS-FIRST.txt "$out\"
           if (Test-Path docs\DEPLOYING.md) { Copy-Item docs\DEPLOYING.md "$out\docs-DEPLOYING.md" }
           if (Test-Path docs\BUILDING.md) { Copy-Item docs\BUILDING.md "$out\docs-BUILDING.md" }
 
