@@ -13,6 +13,13 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # Real Python on PATH first; avoids the EACCES WindowsApps python stub
+      # issue that intermittently breaks install-qt-action on windows runners.
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
       - name: Install Qt 6 (MSVC 2022 64-bit)
         uses: jurplel/install-qt-action@v4
         with:
