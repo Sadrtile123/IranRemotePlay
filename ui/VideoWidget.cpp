@@ -82,9 +82,10 @@ void VideoWidget::paintEvent(QPaintEvent*) {
         p.setFont(headerFont(12));
         p.drawText(rect().adjusted(0, -18, 0, -18), Qt::AlignCenter, tr("Waiting for the stream..."));
         p.setPen(QColor(90, 98, 112));
-        QFont small;
-        small.setPointSizeF(8.5);
-        p.setFont(small);
+        // NOTE: not named `small` - collides with rpcndr.h's #define small char
+        QFont smallFont;
+        smallFont.setPointSizeF(8.5);
+        p.setFont(smallFont);
         p.drawText(rect().adjusted(0, 14, 0, 14), Qt::AlignCenter,
                    tr("The video appears here as soon as the host starts the stream.\n"
                       "F11 fullscreen - F10 stats overlay"));

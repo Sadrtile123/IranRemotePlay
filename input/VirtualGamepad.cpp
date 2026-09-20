@@ -16,20 +16,20 @@ namespace rp {
 namespace input {
 namespace {
 
-void __stdcall x360NotificationThunk(void* /*client*/, void* target, unsigned char large,
-                                      unsigned char small, unsigned char /*led*/, void* userData) {
+void __stdcall x360NotificationThunk(void* /*client*/, void* target, unsigned char largeMotor,
+                                      unsigned char smallMotor, unsigned char /*led*/, void* userData) {
     auto* self = static_cast<VirtualGamepad*>(userData);
     if (!self) return;
-    self->handleVibration(target, large, small);
+    self->handleVibration(target, largeMotor, smallMotor);
 }
 
 } // namespace
 
 // The thunk calls this; public on the class so the free thunk can reach it.
-void VirtualGamepad::handleVibration(void* target, uint8_t large, uint8_t small) {
+void VirtualGamepad::handleVibration(void* target, uint8_t largeMotor, uint8_t smallMotor) {
     for (const Pad& p : pads_) {
         if (p.target == target) {
-            if (onVibration_) onVibration_(p.playerIndex, large, small);
+            if (onVibration_) onVibration_(p.playerIndex, largeMotor, smallMotor);
             return;
         }
     }

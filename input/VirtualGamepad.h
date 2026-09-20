@@ -56,7 +56,10 @@ public:
     void setVibrationCallback(VibrationCallback cb) { onVibration_ = std::move(cb); }
 
     // Internal: called by the ViGEm notification thunk (target -> player mapping).
-    void handleVibration(void* target, uint8_t large, uint8_t small);
+    // NOTE: param names must not be `small`/`large`: rpcndr.h (via the Windows
+    // headers pulled in alongside ViGEm/DirectInput) #defines `small` as
+    // `char` on MSVC, breaking the declaration with C2628.
+    void handleVibration(void* target, uint8_t largeMotor, uint8_t smallMotor);
 
     [[nodiscard]] bool available() const { return client_ != nullptr; }
     [[nodiscard]] std::string statusText() const;   // for the UI/diagnostics
