@@ -66,6 +66,9 @@ public:
         std::function<void(const std::string& message)> onError;
         std::function<void(common::InputPermissions perms)> onInputPermissions;
         std::function<void(rp::log::Level level, const std::string& message)> onLog;
+        // App-extension messages (>= 0x0010) from the host while CONNECTED
+        // (key exchange, stream control) are forwarded here.
+        std::function<void(uint16_t type, const std::vector<uint8_t>& payload)> onAppMessage;
     };
 
     explicit ClientSession(Events events = {});
@@ -81,11 +84,20 @@ public:
     // Graceful disconnect: sends BYE, then closes.
     void stop();
 
+    // App-extension message to the host (thread-safe; posts to the network
+    // thread). Type must be >= 0x0010; payload is pre-encoded by the caller.
+    void sendAppMessage(uint16_t type, const std::vector<uint8_t>& payload);
+
+    // Internet mode (Phase 13): attach an already-relay-paired connection and
+    // run the handshake over it (replaces the direct connect path).
+    void attachConnection(net::TcpConnection::Ptr conn, const ClientSessionParams& params);
+
     [[nodiscard]] bool active() const { return running_.load(); }
     [[nodiscard]] ClientStatus status() const;
 
 private:
     void runNetworkThread();
+    void runNetworkThreadBody();   // io_.run() shared by both start paths
     void joinNetworkThread(); // safe from any thread except the io thread itself
     void handleFrame(uint16_t type, const uint8_t* data, uint32_t size);
     void handleConnected(net::TcpConnection::Ptr conn);

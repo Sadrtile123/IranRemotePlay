@@ -115,6 +115,13 @@ public:
     // io thread. Safe to call only when no previous attempt is in flight.
     void connect(const std::string& host, uint16_t port, uint32_t timeoutMs, ConnectResult result);
 
+    // Phase 13 — relay connect: TCP connect to the signaling server's relay
+    // port, speak the JSON pairing handshake ("relay"/token/role), then hand
+    // back a normal TcpConnection running the RemotePlay frame protocol.
+    // Runs entirely on this client's io_context (session thread safe).
+    void connectRelay(const std::string& host, uint16_t port, const std::string& token,
+                      const std::string& role, uint32_t timeoutMs, ConnectResult result);
+
     void cancel(); // cancels an in-flight attempt (callback fires with operation_aborted)
 
     TcpClient(const TcpClient&) = delete;

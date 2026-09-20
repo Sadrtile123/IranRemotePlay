@@ -278,6 +278,104 @@ struct ConnectAttempt : std::enable_shared_from_this<ConnectAttempt> {
     bool finished = false;
 };
 
+
+// Phase 13 — relay handshake attempt: connect, exchange JSON lines, adopt.
+struct RelayConnectAttempt : std::enable_shared_from_this<RelayConnectAttempt> {
+    RelayConnectAttempt(asio::io_context& io, std::string host, uint16_t port,
+                        std::string token, std::string role, uint32_t timeoutMs,
+                        TcpClient::ConnectResult result)
+        : socket(io), timer(io), host(std::move(host)), port(std::to_string(port)),
+          token(std::move(token)), role(std::move(role)), timeoutMs(timeoutMs),
+          result(std::move(result)) {}
+
+    void start() {
+        auto self = shared_from_this();
+        timer.expires_after(std::chrono::milliseconds(timeoutMs));
+        timer.async_wait([self](std::error_code ec) {
+            if (ec == asio::error::operation_aborted) return;
+            if (self->finished) return;
+            self->finish(std::make_error_code(std::errc::timed_out), nullptr);
+            std::error_code cancelEc;
+            self->socket.close(cancelEc);
+            self->resolver.cancel();
+        });
+        resolver.async_resolve(host, port,
+            [self](std::error_code ec, asio::ip::tcp::resolver::results_type results) {
+                if (self->finished) return;
+                if (ec) { self->finish(ec, nullptr); return; }
+                asio::async_connect(self->socket, results,
+                    [self](std::error_code ec2, asio::ip::tcp::endpoint) {
+                        if (self->finished) return;
+                        if (ec2) { self->finish(ec2, nullptr); return; }
+                        self->sendHandshake();
+                    });
+            });
+    }
+
+    void sendHandshake() {
+        auto self = shared_from_this();
+        // Minimal JSON; the server only needs type/token/role.
+        const std::string line = "{\"type\":\"relay\",\"token\":\"" + token + "\",\"role\":\"" + role + "\"}\n";
+        asio::async_write(socket, asio::buffer(line),
+            [self](std::error_code ec, size_t) {
+                if (self->finished) return;
+                if (ec) { self->finish(ec, nullptr); return; }
+                self->readReply();
+            });
+    }
+
+    void readReply() {
+        auto self = shared_from_this();
+        asio::async_read_until(socket, replyBuf, '\n',
+            [self](std::error_code ec, size_t) {
+                if (self->finished) return;
+                if (ec) { self->finish(ec, nullptr); return; }
+                std::istream is(&self->replyBuf);
+                std::string line;
+                std::getline(is, line);
+                if (line.find("relay_rejected") != std::string::npos) {
+                    self->finish(std::make_error_code(std::errc::connection_refused), nullptr);
+                    return;
+                }
+                if (line.find("relay_paired") != std::string::npos) {
+                    auto conn = TcpConnection::make(std::move(self->socket), "relay");
+                    self->finish(std::error_code(), conn);
+                    return;
+                }
+                // relay_accepted: wait for the pairing line.
+                self->readReply();
+            });
+    }
+
+    void cancel() {
+        if (finished) return;
+        finished = true;
+        std::error_code ec;
+        socket.close(ec);
+        resolver.cancel();
+        timer.cancel();
+    }
+
+    void finish(const std::error_code& ec, TcpConnection::Ptr conn) {
+        if (finished) return;
+        finished = true;
+        timer.cancel();
+        result(ec, std::move(conn));
+    }
+
+    asio::ip::tcp::socket socket;
+    asio::steady_timer timer;
+    asio::ip::tcp::resolver resolver{socket.get_executor()};
+    asio::streambuf replyBuf;
+    std::string host;
+    std::string port;
+    std::string token;
+    std::string role;
+    uint32_t timeoutMs;
+    TcpClient::ConnectResult result;
+    bool finished = false;
+};
+
 } // namespace
 
 TcpClient::TcpClient(asio::io_context& io) : io_(io) {}
@@ -294,6 +392,15 @@ void TcpClient::cancel() {
         a->cancel();
         attempt_.reset();
     }
+}
+
+
+void TcpClient::connectRelay(const std::string& host, uint16_t port, const std::string& token,
+                             const std::string& role, uint32_t timeoutMs, ConnectResult result) {
+    auto attempt = std::make_shared<RelayConnectAttempt>(io_, host, port, token, role, timeoutMs,
+                                                         std::move(result));
+    attempt_ = attempt;
+    attempt->start();
 }
 
 } // namespace rp::net

@@ -303,6 +303,23 @@ void UdpTransport::sendSmall(UdpType type, const void* data, size_t size) {
     postDatagram(dg);
 }
 
+void UdpTransport::sendRelayBind(const std::string& token32hex) {
+    if (!running_.load() || !socket_ || !havePeer_.load()) return;
+    std::lock_guard<std::mutex> lk(peerMutex_);
+    const asio::ip::udp::endpoint target = peer_;
+    // Raw packet: "RPBIND" + 32 hex chars (not the RemotePlay media header —
+    // the relay consumes it before any media flows).
+    std::vector<uint8_t> pkt(6 + 32, 0);
+    std::memcpy(pkt.data(), "RPBIND", 6);
+    std::memcpy(pkt.data() + 6, token32hex.data(), std::min<size_t>(32, token32hex.size()));
+    asio::post(*io_, [this, target, pkt = std::move(pkt)] {
+        if (!socket_) return;
+        asio::error_code ec;
+        socket_->send_to(asio::buffer(pkt), target, 0, ec);
+        if (ec) sendErrors_.fetch_add(1);
+    });
+}
+
 void UdpTransport::sendPunch(const asio::ip::udp::endpoint& to) {
     if (!running_.load() || !socket_) return;
     UdpHeader h;

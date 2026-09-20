@@ -68,6 +68,10 @@ public:
         std::function<void(uint32_t clientId, common::InputPermissions perms)> onInputPermissions;
         std::function<void(rp::log::Level level, const std::string& message)> onLog;
         std::function<void()> onStopped;
+        // App-extension messages (Phases 12-16): KEY_EXCHANGE, SESSION_KEY_READY,
+        // STREAM_START, STREAM_STOP, KEYFRAME_REQUEST arriving from a CONNECTED
+        // client are forwarded here instead of being rejected by the state machine.
+        std::function<void(uint32_t clientId, uint16_t type, const std::vector<uint8_t>& payload)> onAppMessage;
     };
 
     explicit HostSession(Events events = {});
@@ -95,6 +99,14 @@ public:
     void kickClient(uint32_t clientId, const std::string& reason = "Kicked by host");
     // Disables/enables all input forwarding for this client.
     void setClientInput(uint32_t clientId, bool enableAll);
+
+    // App-extension message to a CONNECTED client (thread-safe; posts to the
+    // network thread). Types must be >= 0x0010 (streaming/app range).
+    void sendAppMessage(uint32_t clientId, uint16_t type, const std::vector<uint8_t>& payload);
+
+    // Internet mode (Phase 13): attach an already-relay-paired connection as
+    // a new client (instead of a TCP accept). Thread-safe.
+    void attachConnection(net::TcpConnection::Ptr conn);
 
     [[nodiscard]] static std::chrono::milliseconds steadyNowMs();
 

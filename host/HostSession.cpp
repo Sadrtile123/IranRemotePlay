@@ -188,6 +188,21 @@ void HostSession::setClientInput(uint32_t clientId, bool enableAll) {
     });
 }
 
+void HostSession::sendAppMessage(uint32_t clientId, uint16_t type, const std::vector<uint8_t>& payload) {
+    if (type < 0x0010) return;
+    asio::post(io_, [this, clientId, type, payload] {
+        auto it = clients_.find(clientId);
+        if (it == clients_.end() || !it->second.connection) return;
+        it->second.connection->send(type, payload);   // raw frame; caller pre-encodes
+    });
+}
+
+void HostSession::attachConnection(net::TcpConnection::Ptr conn) {
+    asio::post(io_, [this, conn] {
+        handleNewConnection(conn);
+    });
+}
+
 void HostSession::handleNewConnection(net::TcpConnection::Ptr conn) {
     if (stopping_.load()) {
         conn->close();
@@ -249,10 +264,22 @@ void HostSession::handleFrame(uint32_t clientId, uint16_t type, uint8_t /*flags*
         case proto::Id::Bye:
             if (auto* m = std::get_if<proto::msg::Bye>(&env->body)) handleBye(clientId, *m);
             break;
-        default:
+        default: {
+            // App-extension range (0x0010+): forward to the app layer when the
+            // client is CONNECTED; still rejected earlier in the handshake.
+            const bool appRange = type >= 0x0010;
+            const auto it2 = clients_.find(clientId);
+            const bool connected = it2 != clients_.end() &&
+                                   it2->second.state == common::ConnectionState::Connected;
+            if (appRange && connected && events_.onAppMessage) {
+                std::vector<uint8_t> payload(data, data + size);
+                events_.onAppMessage(clientId, type, payload);
+                break;
+            }
             dropClient(clientId, true, proto::Reason::ProtocolError,
                        "Unexpected message in current state.");
             return;
+        }
     }
 }
 

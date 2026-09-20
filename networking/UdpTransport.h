@@ -88,6 +88,11 @@ public:
     void sendStreamStart() { static const uint8_t zero = 0; sendSmall(UdpType::StreamStart, &zero, 1); }
     void sendStreamStop()  { static const uint8_t zero = 0; sendSmall(UdpType::StreamStop, &zero, 1); }
 
+    // Phase 14 — registers this socket's public endpoint with the session's
+    // UDP relay (RPBIND + 32-byte hex token) so the relay forwards the peer's
+    // encrypted datagrams to us. Call after setPeer(relayEndpoint).
+    void sendRelayBind(const std::string& token32hex);
+
     // Hole-punch keepalive (tiny packet until the remote answers).
     void sendPunch(const asio::ip::udp::endpoint& to);
 

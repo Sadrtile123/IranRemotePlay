@@ -63,6 +63,42 @@ void ClientSession::start(const ClientSessionParams& params) {
     });
 }
 
+void ClientSession::attachConnection(net::TcpConnection::Ptr conn, const ClientSessionParams& params) {
+    joinNetworkThread();
+    if (running_.exchange(true)) return;
+    stopping_ = false;
+    params_ = params;
+
+    updateStatus([](ClientStatus& s) {
+        s.state = common::ConnectionState::Connecting;
+        s.hostName.clear();
+        s.gameName.clear();
+        s.lastError.clear();
+        s.rttMs = 0;
+    });
+    setState(common::ConnectionState::Connecting);
+    logEvent(rp::log::Level::Info, "Attaching relay-paired connection to " + conn->remoteAddress());
+
+    work_ = std::make_unique<WorkGuard>(asio::make_work_guard(io_));
+    threadDone_ = std::promise<void>{};
+    threadDoneFuture_ = threadDone_.get_future();
+    thread_ = std::thread([this, conn] {
+        handleConnected(conn);
+        heartbeat_ = std::make_unique<asio::steady_timer>(io_);
+        heartbeat_->expires_after(kHeartbeatPeriod);
+        heartbeat_->async_wait([this](const std::error_code& ec) {
+            if (ec || stopping_.load()) return;
+            startHeartbeat();
+        });
+        runNetworkThreadBody();
+        threadDone_.set_value();
+    });
+}
+
+void ClientSession::runNetworkThreadBody() {
+    io_.run();
+}
+
 void ClientSession::runNetworkThread() {
     connector_->connect(params_.hostAddress, params_.hostPort, params_.connectTimeoutMs,
                         [this](std::error_code ec, net::TcpConnection::Ptr conn) {
@@ -168,11 +204,23 @@ void ClientSession::handleFrame(uint16_t type, const uint8_t* data, uint32_t siz
             finish(common::ConnectionState::Disconnected, "Host closed the session", true);
             break;
         default:
+            if (type >= 0x0010 && status_.state == common::ConnectionState::Connected && events_.onAppMessage) {
+                std::vector<uint8_t> payload(data, data + size);
+                events_.onAppMessage(type, payload);
+                break;
+            }
             logEvent(rp::log::Level::Warning,
                      "Ignoring unexpected message " +
                          std::string(proto::idName(env->type)));
             break;
     }
+}
+
+void ClientSession::sendAppMessage(uint16_t type, const std::vector<uint8_t>& payload) {
+    if (type < 0x0010) return;
+    asio::post(io_, [this, type, payload] {
+        if (connection_) connection_->send(type, payload);
+    });
 }
 
 void ClientSession::handleHostCapabilities(const proto::msg::HostCapabilities& caps) {
