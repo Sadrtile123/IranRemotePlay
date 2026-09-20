@@ -10,30 +10,64 @@ PC. Think "game streaming for couch co-op", not remote desktop.
 > other streaming product; no proprietary code, protocols, or assets are
 > used. Stream only games you own and respect their terms of service.
 
-## Status: Phase 1 of 17
+## Status: All 17 phases complete (v0.1.0)
 
-Done (this repository):
+One app, two roles:
 
-* Full CMake + Qt 6 (C++20, MSVC 2022) application skeleton - host mode and
-  client mode in one app with a modern dark UI.
-* Standalone-Asio TCP control channel with a framed binary protocol.
-* Complete session handshake: session codes (`ABC7-K92P` style), host
-  ACCEPT/REJECT approval, capability exchange, H.264 codec negotiation
-  (HEVC/AV1 negotiation ready), heartbeats with live RTT.
-* Multi-client session management: player table with latency, kick, and
-  per-player input enable/disable (host authority, default-restrictive).
-* Structured logging (`%LOCALAPPDATA%\RemotePlay\Logs`) and JSON settings
-  (`%APPDATA%\RemotePlay\config.json`).
-* Four automated test suites, including a full in-process host<->client
-  handshake integration test over real sockets.
-* GitHub Actions CI building and testing on Windows (MSVC + Qt).
+* **HOST** - pick your game window (or a whole monitor), share the code,
+  approve players, watch live stats, kick/disable input per player.
+* **JOIN** - enter host address + code (LAN) or server + code (Internet),
+  play with your own controller, keyboard and mouse.
 
-Coming next (see `docs/ROADMAP.md`): Windows Graphics Capture (Phase 2),
-NVENC/AMF/QSV H.264 encoding (Phase 3), UDP media streaming (Phase 4),
-decoding/rendering (Phase 5), WASAPI + Opus audio (6-7), controllers and
-virtual gamepad (8-10), keyboard/mouse (11), authenticated encryption (12),
-STUN/NAT traversal + signaling + relay (13-14), adaptive bitrate (15),
-polished UI (16), installer (17).
+Feature set (all implemented and building):
+
+* **Video**: DXGI desktop/window capture, FFmpeg encoding with automatic
+  NVENC / AMF / QSV hardware encoders and x264 software fallback, H.264 +
+  HEVC, 720p-4K at 30/60/120 fps, 2-50 Mbps, letterboxed to your chosen
+  resolution so window moves never restart the encoder.
+* **Transport**: custom UDP media protocol (30-byte header, fragmentation
+  and out-of-order reassembly, sequence-loss detection, adaptive jitter
+  buffer, receiver-driven keyframe recovery, PING/PONG RTT/jitter stats).
+* **Decoding + display**: threaded low-delay H.264/HEVC/AV1 software
+  decoding, aspect-preserving render, F10 diagnostics overlay, fullscreen,
+  connection-quality banner.
+* **Audio**: WASAPI loopback capture of whatever the game plays, Opus
+  64-192 kbps, shared timestamps for A/V sync, low-latency WASAPI playback.
+* **Input**: XInput + DirectInput controllers, 8 ms polling, change-only
+  sending; virtual Xbox 360 pads on the host via ViGEm (vibration echoes
+  back to the player's real pad); keyboard/mouse events with host-side
+  per-player permission enforcement and stuck-key release safety.
+* **Security**: ECDH P-256 key exchange bound to the session code,
+  HKDF-SHA256 key schedule, AES-256-GCM on every UDP datagram (header is
+  AAD), 64-entry replay window, fail-closed transport, plaintext rejection
+  after key confirmation. The relay only ever sees ciphertext.
+* **Internet mode**: single-file Python signaling + relay server (join by
+  code, no port forwarding); relay TCP carries the session handshake;
+  encrypted UDP media flows via relay with automatic direct-path upgrade
+  when NAT permits, falling back to the relay if the direct path breaks.
+* **Adaptive bitrate**: hysteresis controller on RTT/loss/jitter/fps with
+  proportional steps and cooldown; manual slider override.
+* **Crash recovery**: encoder failures offer Restart / Switch-to-software;
+  capture loss auto-recovers; client disconnects release held keys and
+  remove virtual pads.
+* **Tests**: 10 suites (packet, protocol, session codes, handshake, UDP,
+  ABR, crypto, signaling+relay integration with the real Python server,
+  plus the server's own test) - green on Linux and Windows CI.
+* **Distribution**: portable zip (no installer, no admin) + verification
+  tools (`rp_tool_capturedump`, `rp_tool_encodetest`); GitHub Actions
+  builds the MSVC release and publishes it on tags.
+
+### v1 known limits (documented, by design)
+
+* One full CPU copy in the capture path and one in the render path
+  (see `docs/PERFORMANCE.md`); GPU-direct encode/decode is future work.
+* Software H.264 decoding (hardware decode is future work); 1080p60 is
+  comfortable on modern CPUs.
+* The TCP control channel is not itself encrypted; the session-code-bound
+  key exchange protects all media and input. Use the TLS options in
+  `docs/DEPLOYING.md` for the signaling server.
+* Internet mode without a deployed server: put the included `server.py` on
+  any VPS (one command, no dependencies).
 
 ## Quick start (Windows 10/11 x64)
 

@@ -146,6 +146,7 @@ private:
     std::unique_ptr<asio::ip::udp::socket> socket_;
     std::unique_ptr<asio::steady_timer> pingTimer_;
     std::thread ioThread_;
+    std::atomic<std::thread::id> ioThreadId_{};      // set by the io thread itself
     asio::ip::udp::endpoint senderEndpoint_;
     asio::ip::udp::endpoint peer_;
     std::mutex peerMutex_;

@@ -47,8 +47,16 @@ cp "$ROOT/docs/DEPLOYING.md" "$OUT/docs-DEPLOYING.md" 2>/dev/null || true
 cp "$ROOT/docs/BUILDING.md" "$OUT/docs-BUILDING.md" 2>/dev/null || true
 
 cat > "$OUT/RUN-THIS-FIRST.txt" <<'EOF'
-RemotePlay 0.1.0 - Windows 10/11 x64
+RemotePlay 0.1.1 - Windows 10/11 x64
 ====================================
+
+WHAT'S NEW IN 0.1.1
+  * Fixed the "Stream start failed: no usable encoder (frame alloc failed)"
+    crash - streaming now starts.
+  * Fixed host freeze / "not responding" (dialog storm + thread deadlocks).
+  * F11 fullscreen now works (window-level, also double-click; Esc exits).
+  * New dark UI, stats grid, copy-code + open-logs buttons, recent hosts.
+  * Client shows a clear error if the host never starts the stream.
 
 QUICK START
   1. Run RemotePlay.exe (no installation needed).
@@ -80,7 +88,7 @@ echo "Package contents:"
 (cd "$OUT" && ls -R | head -40)
 echo "Size: $(du -sh "$OUT" | cut -f1)"
 
-ZIP=/home/z/my-project/download/RemotePlay-0.1.0-Windows-x64.zip
+ZIP=/home/z/my-project/download/RemotePlay-0.1.1-Windows-x64.zip
 rm -f "$ZIP"
 (cd /home/z/my-project/RemotePlay/dist && zip -qr "$ZIP" RemotePlay-Windows-x64)
 echo "ZIP: $ZIP ($(du -h "$ZIP" | cut -f1))"

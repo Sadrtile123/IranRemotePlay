@@ -1,6 +1,7 @@
+// RemotePlay - ui/HostWindow.h
+// v0.1.1 — redesigned; adds copy-code, open-logs, non-blocking error handling.
+
 #pragma once
-// Phase 16 — host window: session setup, player management, live stats,
-// approval + crash-recovery dialogs, internet/LAN modes.
 
 #include "../common/Config.h"
 #include "../host/HostApp.h"
@@ -17,6 +18,7 @@ class QTableWidget;
 class QTextEdit;
 class QCheckBox;
 class QSlider;
+class QMessageBox;
 
 namespace rp::app { class HostCoordinator; }
 
@@ -44,17 +46,22 @@ private slots:
     void onStateChanged();
     void onApprovalRequest(uint32_t clientId, const QString& name);
     void onEncoderTrouble(const QString& message);
-    void onManualBitrate(int kbps);
+    void onManualBitrate(int mbps);
     void onAbrToggled(bool on);
+    void copySessionCode();
+    void openLogsFolder();
+    void showError(const QString& message);   // rate-limited, auto-closing
 
 private:
     void buildUi();
     void setHostingUi(bool hosting);
+    void makeStatCell(const QString& name, QLabel** nameLabel, QLabel** valueLabel);
 
     config::Config& cfg_;
     app::HostCoordinator* coordinator_ = nullptr;
 
     // setup panel
+    QLineEdit* nameEdit_ = nullptr;
     QComboBox* modeCombo_ = nullptr;        // LAN / Internet
     QLineEdit* serverEdit_ = nullptr;
     QLineEdit* gameEdit_ = nullptr;
@@ -67,6 +74,7 @@ private:
     QPushButton* startButton_ = nullptr;
     QPushButton* stopButton_ = nullptr;
     QPushButton* backButton_ = nullptr;
+    QPushButton* rescanButton_ = nullptr;
 
     // session panel
     QLabel* codeLabel_ = nullptr;
@@ -75,14 +83,28 @@ private:
     QTableWidget* playersTable_ = nullptr;
     QPushButton* kickButton_ = nullptr;
     QPushButton* inputButton_ = nullptr;
+    QPushButton* copyButton_ = nullptr;
+    QPushButton* logsButton_ = nullptr;
 
     // stats panel
-    QLabel* statsLabel_ = nullptr;
+    QLabel* statFps_ = nullptr, * statFpsV_ = nullptr;
+    QLabel* statEncoder_ = nullptr, * statEncoderV_ = nullptr;
+    QLabel* statCapture_ = nullptr, * statCaptureV_ = nullptr;
+    QLabel* statEncode_ = nullptr, * statEncodeV_ = nullptr;
+    QLabel* statBitrate_ = nullptr, * statBitrateV_ = nullptr;
+    QLabel* statPing_ = nullptr, * statPingV_ = nullptr;
+    QLabel* statLoss_ = nullptr, * statLossV_ = nullptr;
+    QLabel* statJitter_ = nullptr, * statJitterV_ = nullptr;
     QSlider* bitrateSlider_ = nullptr;
     QCheckBox* abrCheck_ = nullptr;
 
     QTextEdit* logView_ = nullptr;
-    QTimer* refreshTimer_;
+    QTimer* refreshTimer_ = nullptr;
+
+    // error display (one at a time, auto-closes; no modal-dialog storms)
+    QMessageBox* activeErrorBox_ = nullptr;
+    QString lastErrorText_;
+    qint64 lastErrorShownAt_ = 0;
 };
 
 } // namespace rp::ui

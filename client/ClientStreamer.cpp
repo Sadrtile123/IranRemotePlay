@@ -23,6 +23,7 @@ bool ClientStreamer::start(const std::string& hostAddress, uint16_t udpPort, uin
                            VideoCodec codec, std::shared_ptr<net::UdpCryptoSink> crypto,
                            PresentCallback present, ErrorCallback onError,
                            std::string* err) {
+    std::lock_guard<std::mutex> lk(stopMutex_);
     if (running_.exchange(true)) { if (err) *err = "already running"; running_.store(false); return false; }
     hostAddress_ = hostAddress;
     udpPort_ = udpPort;
@@ -84,6 +85,7 @@ bool ClientStreamer::start(const std::string& hostAddress, uint16_t udpPort, uin
 
 void ClientStreamer::stop() {
     if (!running_.exchange(false)) return;
+    std::lock_guard<std::mutex> lk(stopMutex_);
     RP_INFO() << "[client-streamer] stopping";
     if (transport_) transport_->sendStreamStop();
     if (decodeThread_.joinable()) decodeThread_.join();
@@ -127,7 +129,7 @@ void ClientStreamer::decodeLoop() {
         }
 
         for (const DecodedFrame& df : decoded) {
-            if (presentCb_) presentCb_(df);
+            if (presentCb_) presentCb_(std::make_shared<DecodedFrame>(df));
             {
                 std::lock_guard<std::mutex> lk(statsMutex_);
                 ++statFramesWindow_;
@@ -178,6 +180,7 @@ void ClientStreamer::decodeLoop() {
 
 ClientStreamStats ClientStreamer::stats() const {
     ClientStreamStats s;
+    std::lock_guard<std::mutex> lk(stopMutex_);
     if (transport_) s.udp = transport_->stats();
     if (decoder_) {
         s.decodeMs = decoder_->averageDecodeMs();

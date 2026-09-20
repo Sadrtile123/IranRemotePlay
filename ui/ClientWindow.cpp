@@ -1,50 +1,97 @@
-// Phase 16 — client window implementation. See ClientWindow.h.
+// RemotePlay - ui/ClientWindow.cpp
+// v0.1.1 — join card + recent hosts + real fullscreen (F11) + host:port
+// parsing + live status. See ClientWindow.h.
 
 #include "ClientWindow.h"
 #include "../app/ClientCoordinator.h"
 #include "Theme.h"
 
 #include <QComboBox>
+#include <QDateTime>
 #include <QGroupBox>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QLineEdit>
 #include <QMessageBox>
 #include <QPushButton>
-#include <QStackedLayout>
+#include <QScrollArea>
+#include <QSettings>
+#include <QShortcut>
+#include <QTimer>
 #include <QVBoxLayout>
 
 namespace rp::ui {
 
 using app::ClientCoordinator;
 
+namespace {
+constexpr int kMaxRecentHosts = 8;
+}
+
 ClientWindow::ClientWindow(config::Config& cfg, QWidget* parent) : QWidget(parent), cfg_(cfg) {
     coordinator_ = new ClientCoordinator(cfg_, this);
     buildUi();
 
     connect(coordinator_, &ClientCoordinator::logLine, this, [this](const QString& l) {
-        infoLabel_->setText(l.left(140));
+        infoLabel_->setText(l.left(160));
     });
     connect(coordinator_, &ClientCoordinator::stateChanged, this, &ClientWindow::onStateChanged);
     connect(coordinator_, &ClientCoordinator::disconnected, this, &ClientWindow::onDisconnected);
-    connect(coordinator_, &ClientCoordinator::errorOccurred, this, [this](const QString& msg) {
-        joinStatusLabel_->setText(msg);
-    });
+    connect(coordinator_, &ClientCoordinator::errorOccurred, this, &ClientWindow::showError);
     connect(coordinator_, &ClientCoordinator::connectedToHost, this, &ClientWindow::onConnectedToHost);
+
+    // Fullscreen hotkey at WINDOW level: works before the video widget gains
+    // focus and even while the join form is up. This was the "F11 does
+    // nothing" bug: the toggle was only wired after the stream started AND
+    // targeted a child widget.
+    // NOTE: Escape is deliberately NOT a window shortcut - it must stay a
+    // game key. It exits fullscreen via VideoWidget::escapePressed instead
+    // (only consumed while fullscreen).
+    auto* f11 = new QShortcut(QKeySequence(Qt::Key_F11), this);
+    connect(f11, &QShortcut::activated, this, &ClientWindow::toggleFullscreen);
+    connect(video_, &VideoWidget::escapePressed, this, [this] {
+        if (videoFullscreen_) setVideoFullscreen(false);
+    });
+    // Double-click + F11 signals from the video surface: toggle regardless of
+    // the requested direction (the child cannot know the window state).
+    connect(video_, &VideoWidget::toggleFullscreenRequested, this, [this](bool) {
+        toggleFullscreen();
+    });
 }
 
 ClientWindow::~ClientWindow() { disconnectIfActive(); }
 
 void ClientWindow::buildUi() {
     auto* rootLayout = new QVBoxLayout(this);
+    rootLayout->setContentsMargins(18, 14, 18, 14);
+    rootLayout->setSpacing(12);
 
     // ---------------- join form ----------------
+    auto* scroll = new QScrollArea;
+    scroll->setWidgetResizable(true);
+    scroll->setFrameShape(QFrame::NoFrame);
     joinForm_ = new QWidget;
-    auto* box = new QGroupBox(tr("Join a session"));
+    joinForm_->setObjectName(QStringLiteral("joinPage"));
+
+    auto* headerRow = new QHBoxLayout;
+    auto* title = new QLabel(tr("Join a session"));
+    title->setFont(headerFont(16));
+    backButton_ = new QPushButton(tr("Back"));
+    connect(backButton_, &QPushButton::clicked, this, [this] {
+        disconnectIfActive();
+        emit backToHomeRequested();
+    });
+    headerRow->addWidget(title);
+    headerRow->addStretch(1);
+    headerRow->addWidget(backButton_);
+
+    auto* box = new QGroupBox(tr("CONNECT"));
     auto* form = new QVBoxLayout(box);
+    form->setSpacing(8);
 
     form->addWidget(new QLabel(tr("Your name:")));
     nameEdit_ = new QLineEdit(QString::fromStdString(cfg_.profile.name));
+    if (nameEdit_->text().isEmpty()) nameEdit_->setText(QStringLiteral("Player"));
     form->addWidget(nameEdit_);
 
     form->addWidget(new QLabel(tr("Connection mode:")));
@@ -54,13 +101,18 @@ void ClientWindow::buildUi() {
     form->addWidget(modeCombo_);
 
     form->addWidget(new QLabel(tr("Host / server address:")));
-    hostEdit_ = new QLineEdit;
-    hostEdit_->setPlaceholderText("192.168.1.20  or  play.example.com");
-    form->addWidget(hostEdit_);
+    hostCombo_ = new QComboBox;
+    hostCombo_->setEditable(true);
+    hostCombo_->setInsertPolicy(QComboBox::NoInsert);
+    hostCombo_->lineEdit()->setPlaceholderText(
+        tr("192.168.1.20  or  192.168.1.20:%1  or  play.example.com").arg(cfg_.network.listenPort));
+    loadRecentHosts();
+    form->addWidget(hostCombo_);
 
     form->addWidget(new QLabel(tr("Session code:")));
     codeEdit_ = new QLineEdit;
-    codeEdit_->setPlaceholderText("e.g. 57EA6A6Q");
+    codeEdit_->setPlaceholderText(tr("e.g. 57EA6A6Q"));
+    codeEdit_->setMaxLength(16);
     form->addWidget(codeEdit_);
 
     joinButton_ = new QPushButton(tr("Join"));
@@ -69,22 +121,27 @@ void ClientWindow::buildUi() {
     form->addWidget(joinButton_);
 
     joinStatusLabel_ = new QLabel;
+    joinStatusLabel_->setObjectName(QStringLiteral("joinStatus"));
     joinStatusLabel_->setWordWrap(true);
     form->addWidget(joinStatusLabel_);
 
-    backButton_ = new QPushButton(tr("Back"));
-    connect(backButton_, &QPushButton::clicked, this, [this] {
-        disconnectIfActive();
-        emit backToHomeRequested();
-    });
-    form->addWidget(backButton_);
+    auto* hint = new QLabel(tr("While streaming: F11 fullscreen - F10 stats overlay - Esc exits fullscreen."), box);
+    hint->setProperty("muted", true);
+    hint->setWordWrap(true);
+    form->addWidget(hint);
 
-    auto* wrap = new QHBoxLayout;
+    auto* wrap = new QVBoxLayout(joinForm_);
+    wrap->setContentsMargins(0, 0, 6, 0);
+    wrap->setSpacing(12);
+    wrap->addLayout(headerRow);
+    auto* center = new QHBoxLayout;
+    center->addStretch(1);
+    center->addWidget(box, 2);
+    center->addStretch(1);
+    wrap->addLayout(center);
     wrap->addStretch(1);
-    wrap->addWidget(box);
-    wrap->addStretch(1);
-    joinForm_->setLayout(wrap);
-    rootLayout->addWidget(joinForm_, 1);
+    scroll->setWidget(joinForm_);
+    rootLayout->addWidget(scroll, 1);
 
     // ---------------- stream view ----------------
     video_ = new VideoWidget;
@@ -93,18 +150,43 @@ void ClientWindow::buildUi() {
     rootLayout->addWidget(video_, 1);
     video_->setVisible(false);
 
-    auto* bottomBar = new QWidget;
-    auto* bar = new QHBoxLayout(bottomBar);
+    bottomBar_ = new QWidget;
+    auto* bar = new QHBoxLayout(bottomBar_);
+    bar->setContentsMargins(0, 0, 0, 0);
+    bar->setSpacing(10);
     infoLabel_ = new QLabel;
     infoLabel_->setWordWrap(true);
+    infoLabel_->setProperty("muted", true);
     bar->addWidget(infoLabel_, 1);
+    fullscreenButton_ = new QPushButton(tr("Fullscreen (F11)"));
+    connect(fullscreenButton_, &QPushButton::clicked, this, &ClientWindow::toggleFullscreen);
+    bar->addWidget(fullscreenButton_);
     leaveButton_ = new QPushButton(tr("Disconnect"));
+    leaveButton_->setObjectName("danger");
     connect(leaveButton_, &QPushButton::clicked, this, &ClientWindow::leave);
     bar->addWidget(leaveButton_);
-    rootLayout->addWidget(bottomBar);
-    bottomBar->setVisible(false);
+    rootLayout->addWidget(bottomBar_);
+    bottomBar_->setVisible(false);
 
     setLayout(rootLayout);
+}
+
+void ClientWindow::loadRecentHosts() {
+    QSettings s(QStringLiteral("RemotePlay"), QStringLiteral("RemotePlay"));
+    const QStringList hosts = s.value(QStringLiteral("recentHosts")).toStringList();
+    hostCombo_->clear();
+    hostCombo_->addItems(hosts);
+}
+
+void ClientWindow::rememberHost(const QString& host) {
+    QSettings s(QStringLiteral("RemotePlay"), QStringLiteral("RemotePlay"));
+    QStringList hosts = s.value(QStringLiteral("recentHosts")).toStringList();
+    hosts.removeAll(host);
+    hosts.prepend(host);
+    while (hosts.size() > kMaxRecentHosts) hosts.removeLast();
+    s.setValue(QStringLiteral("recentHosts"), hosts);
+    loadRecentHosts();
+    hostCombo_->setCurrentText(host);
 }
 
 std::vector<QString> ClientWindow::statsLines() const {
@@ -120,18 +202,46 @@ std::vector<QString> ClientWindow::statsLines() const {
 
 void ClientWindow::join() {
     const QString code = codeEdit_->text().trimmed();
-    const QString host = hostEdit_->text().trimmed();
+    const QString hostRaw = hostCombo_->currentText().trimmed();
     const QString name = nameEdit_->text().trimmed().isEmpty() ? "Player" : nameEdit_->text().trimmed();
-    if (code.isEmpty() || host.isEmpty()) {
+    if (code.isEmpty() || hostRaw.isEmpty()) {
         joinStatusLabel_->setText(tr("Enter the host/server address and the session code."));
         return;
     }
+
+    // Address may be "host", "host:port" (IPv4), or "[v6]:port". Default port
+    // is the configured listen port — previously the client silently used its
+    // own listenPort setting with no way to specify another one.
+    QString host = hostRaw;
+    uint16_t port = static_cast<uint16_t>(cfg_.network.listenPort);
+    if (hostRaw.startsWith('[')) {                       // [v6]:port
+        const int close = hostRaw.indexOf(']');
+        if (close > 0) {
+            host = hostRaw.left(close + 1);              // keep brackets for resolver? strip below
+            host = hostRaw.mid(1, close - 1);
+            if (hostRaw.size() > close + 2 && hostRaw.at(close + 1) == ':') {
+                port = static_cast<uint16_t>(hostRaw.mid(close + 2).toUShort());
+            }
+        }
+    } else {
+        const int colon = hostRaw.lastIndexOf(':');
+        if (colon > 0 && hostRaw.indexOf(':') == colon) { // exactly one colon -> host:port
+            const QString portPart = hostRaw.mid(colon + 1);
+            if (!portPart.isEmpty() && portPart.toInt() > 0 && portPart.toInt() <= 65535) {
+                host = hostRaw.left(colon);
+                port = static_cast<uint16_t>(portPart.toUShort());
+            }
+        }
+    }
+
+    rememberHost(hostRaw);
+
     joinStatusLabel_->setText(tr("Connecting..."));
 
     QString err;
     const bool ok = modeCombo_->currentIndex() == 1
         ? coordinator_->startInternet(host, 9000, code, name, &err)
-        : coordinator_->startLan(host, cfg_.network.listenPort, name, code, &err);
+        : coordinator_->startLan(host, port, name, code, &err);
     if (!ok) {
         joinStatusLabel_->setText(err.isEmpty() ? tr("Could not connect.") : err);
         return;
@@ -152,15 +262,40 @@ void ClientWindow::disconnectIfActive() {
 }
 
 void ClientWindow::setStreamingUi(bool streaming) {
+    if (!streaming && videoFullscreen_) setVideoFullscreen(false);
     joinForm_->setVisible(!streaming);
     video_->setVisible(streaming);
-    leaveButton_->parentWidget()->setVisible(streaming);
+    bottomBar_->setVisible(streaming);
     if (streaming) {
         video_->setFocus();
         video_->setQualityBanner(tr("Connecting to stream..."));
+        infoLabel_->setText(tr("Connecting..."));
     } else {
         video_->setQualityBanner("");
     }
+}
+
+void ClientWindow::setVideoFullscreen(bool fullscreen) {
+    if (videoFullscreen_ == fullscreen) return;
+    videoFullscreen_ = fullscreen;
+    video_->setFullscreenActive(fullscreen);   // fullscreen Esc is consumed; otherwise it's a game key
+    // Fullscreen the WHOLE top-level window and hide the bar: calling
+    // showFullScreen() on the child video widget alone does not produce a
+    // real fullscreen window.
+    QWidget* win = window();
+    if (fullscreen) {
+        win->showFullScreen();
+        bottomBar_->setVisible(false);
+        fullscreenButton_->setText(tr("Exit fullscreen (F11)"));
+    } else {
+        win->showNormal();
+        if (video_->isVisible()) bottomBar_->setVisible(true);
+        fullscreenButton_->setText(tr("Fullscreen (F11)"));
+    }
+}
+
+void ClientWindow::toggleFullscreen() {
+    setVideoFullscreen(!videoFullscreen_);
 }
 
 void ClientWindow::onStateChanged() {
@@ -177,6 +312,15 @@ void ClientWindow::onConnectedToHost(const QString& hostName, const QString& gam
 void ClientWindow::onDisconnected(const QString& reason) {
     setStreamingUi(false);
     joinStatusLabel_->setText(tr("Disconnected: %1").arg(reason));
+}
+
+void ClientWindow::showError(const QString& message) {
+    if (message.isEmpty()) return;
+    joinStatusLabel_->setText(message);
+    joinStatusLabel_->setStyleSheet(QStringLiteral("color:#ff8080;"));
+    QTimer::singleShot(8000, this, [this] {
+        joinStatusLabel_->setStyleSheet(QString());
+    });
 }
 
 void ClientWindow::updateQualityBanner() {

@@ -1,4 +1,6 @@
 // RemotePlay - ui/MainWindow.cpp
+// v0.1.1 — redesigned hero home page with clickable cards.
+
 #include "ui/MainWindow.h"
 
 #include "common/Version.h"
@@ -12,16 +14,52 @@
 #include <QFrame>
 #include <QHBoxLayout>
 #include <QLabel>
+#include <QMouseEvent>
 #include <QPushButton>
 #include <QStackedWidget>
 #include <QVBoxLayout>
 
+#include <functional>
+
 namespace rp::ui {
+namespace {
+
+// A clickable card (host / join). std::function click handler keeps this
+// Q_OBJECT-free and simple.
+class HeroCard : public QFrame {
+public:
+    explicit HeroCard(const QString& title, const QString& desc, QWidget* parent = nullptr)
+        : QFrame(parent) {
+        setObjectName(QStringLiteral("heroCard"));
+        setAttribute(Qt::WA_StyledBackground, true);   // required for QSS backgrounds on QFrame
+        setCursor(Qt::PointingHandCursor);
+        setFixedHeight(150);
+        auto* lay = new QVBoxLayout(this);
+        lay->setContentsMargins(20, 18, 20, 16);
+        lay->setSpacing(6);
+        auto* t = new QLabel(title, this);
+        t->setObjectName(QStringLiteral("heroTitle"));
+        auto* d = new QLabel(desc, this);
+        d->setObjectName(QStringLiteral("heroDesc"));
+        d->setWordWrap(true);
+        lay->addWidget(t);
+        lay->addWidget(d);
+        lay->addStretch(1);
+    }
+    std::function<void()> onClick;
+protected:
+    void mousePressEvent(QMouseEvent* e) override {
+        if (e->button() == Qt::LeftButton && onClick) onClick();
+        QFrame::mousePressEvent(e);
+    }
+};
+
+} // namespace
 
 MainWindow::MainWindow(config::Config& config, QWidget* parent)
     : QMainWindow(parent), config_(config) {
     setWindowTitle(QStringLiteral("RemotePlay"));
-    resize(980, 680);
+    resize(1080, 720);
 
     pages_ = new QStackedWidget(this);
     hostPage_ = new HostWindow(config_, pages_);
@@ -44,44 +82,55 @@ MainWindow::MainWindow(config::Config& config, QWidget* parent)
 
 QWidget* MainWindow::buildHomePage() {
     auto* page = new QWidget(this);
-    page->setAutoFillBackground(true);
+    page->setObjectName(QStringLiteral("homePage"));
+    page->setAttribute(Qt::WA_StyledBackground, true);   // paint the QSS gradient
 
-    auto* title = new QLabel(QStringLiteral("REMOTEPLAY"), page);
-    title->setFont(headerFont(34));
-    title->setAlignment(Qt::AlignCenter);
-    title->setStyleSheet(QStringLiteral("color:#42a0ff; letter-spacing:6px;"));
+    auto* brand = new QLabel(QStringLiteral("REMOTEPLAY"), page);
+    brand->setObjectName(QStringLiteral("brand"));
+    brand->setAlignment(Qt::AlignCenter);
 
     auto* subtitle = new QLabel(
         QStringLiteral("Play local multiplayer games together, over the Internet."), page);
     subtitle->setAlignment(Qt::AlignCenter);
+    subtitle->setStyleSheet(QStringLiteral("color:#9aa3b2;"));
 
-    auto* hostButton = new QPushButton(QStringLiteral("HOST GAME"), page);
-    hostButton->setMinimumHeight(44);
-    auto* joinButton = new QPushButton(QStringLiteral("JOIN SESSION"), page);
-    joinButton->setMinimumHeight(44);
+    auto* hostCard = new HeroCard(
+        QStringLiteral("Host a game"),
+        QStringLiteral("Share your screen and audio. Friends connect with a session code and "
+                       "their controllers, keyboard and mouse control your game."), page);
+    hostCard->onClick = [this] { showHost(); };
+
+    auto* joinCard = new HeroCard(
+        QStringLiteral("Join a session"),
+        QStringLiteral("Enter a session code from your friend and start playing in seconds. "
+                       "F11 toggles fullscreen, F10 shows the stats overlay."), page);
+    joinCard->onClick = [this] { showClient(); };
+
+    auto* cards = new QHBoxLayout();
+    cards->setSpacing(18);
+    cards->addWidget(hostCard, 1);
+    cards->addWidget(joinCard, 1);
+
     auto* settingsButton = new QPushButton(QStringLiteral("Settings"), page);
+    settingsButton->setCursor(Qt::PointingHandCursor);
 
     auto* layout = new QVBoxLayout(page);
-    layout->setContentsMargins(64, 48, 64, 32);
-    layout->setSpacing(14);
+    layout->setContentsMargins(72, 56, 72, 28);
+    layout->setSpacing(12);
     layout->addStretch(2);
-    layout->addWidget(title);
+    layout->addWidget(brand);
     layout->addWidget(subtitle);
-    layout->addStretch(1);
-    layout->addWidget(hostButton);
-    layout->addWidget(joinButton);
-    layout->addSpacing(10);
-    layout->addWidget(settingsButton, 0, Qt::AlignHCenter);
+    layout->addSpacing(24);
+    layout->addLayout(cards);
     layout->addStretch(2);
+    layout->addWidget(settingsButton, 0, Qt::AlignHCenter);
 
-    auto* version = new QLabel(
-        QStringLiteral("v%1 - Phase 1: session handshake (streaming arrives with "
-                       "Phase 2+)").arg(QLatin1String(kAppVersion)), page);
+    auto* version = new QLabel(QStringLiteral("v%1 - Windows x64")
+                                   .arg(QLatin1String(kAppVersion)), page);
     version->setAlignment(Qt::AlignHCenter);
+    version->setStyleSheet(QStringLiteral("color:#6b7180;"));
     layout->addWidget(version);
 
-    connect(hostButton, &QPushButton::clicked, this, &MainWindow::showHost);
-    connect(joinButton, &QPushButton::clicked, this, &MainWindow::showClient);
     connect(settingsButton, &QPushButton::clicked, this, &MainWindow::showSettings);
     return page;
 }

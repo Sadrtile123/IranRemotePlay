@@ -70,15 +70,23 @@ QRect VideoWidget::videoDestRect() const {
 
 void VideoWidget::paintEvent(QPaintEvent*) {
     QPainter p(this);
-    p.fillRect(rect(), QColor(8, 10, 14));
+    p.fillRect(rect(), QColor(6, 7, 10));
 
     if (!frame_.isNull()) {
         const QRect dest = videoDestRect();
         p.setRenderHint(QPainter::SmoothPixmapTransform, false);   // crisp 1:1 or fast scaling
         p.drawImage(dest, frame_);
     } else {
-        p.setPen(QColor(120, 130, 145));
-        p.drawText(rect(), Qt::AlignCenter, tr("Waiting for stream..."));
+        p.setPen(QColor(150, 160, 175));
+        p.setFont(headerFont(12));
+        p.drawText(rect().adjusted(0, -18, 0, -18), Qt::AlignCenter, tr("Waiting for the stream..."));
+        p.setPen(QColor(90, 98, 112));
+        QFont small;
+        small.setPointSizeF(8.5);
+        p.setFont(small);
+        p.drawText(rect().adjusted(0, 14, 0, 14), Qt::AlignCenter,
+                   tr("The video appears here as soon as the host starts the stream.\n"
+                      "F11 fullscreen - F10 stats overlay"));
     }
 
     if (overlayVisible_) drawOverlay(p);
@@ -119,14 +127,14 @@ void VideoWidget::drawOverlay(QPainter& p) {
 }
 
 void VideoWidget::keyPressEvent(QKeyEvent* event) {
+    // F10/F11 are consumed here AND at window level (QShortcut).
     if (event->key() == Qt::Key_F10) { overlayVisible_ = !overlayVisible_; update(); return; }
     if (event->key() == Qt::Key_F11) {
-        const bool entering = !isFullScreen();
-        emit toggleFullscreenRequested(entering);
+        emit toggleFullscreenRequested(true);   // window toggles; it knows the state
         return;
     }
-    if (event->key() == Qt::Key_Escape && isFullScreen()) {
-        emit toggleFullscreenRequested(false);
+    if (event->key() == Qt::Key_Escape && fullscreenActive_) {
+        emit escapePressed();
         return;
     }
     emit keyPressed(event->key(), event->isAutoRepeat());

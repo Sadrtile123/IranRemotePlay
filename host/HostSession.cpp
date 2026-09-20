@@ -43,22 +43,31 @@ bool HostSession::start(const HostSessionParams& params) {
     sessionCode_ = security::generateSessionCode();
 
     // Bind the listener before launching the thread so failures are reported
-    // synchronously to the caller.
+    // synchronously to the caller. If the configured port is taken (another
+    // RemotePlay instance, other software), fall back to an ephemeral port so
+    // hosting still works — the actual port is displayed and shared via code.
     asio::error_code bindEc;
     std::unique_ptr<net::TcpServer> server;
-    try {
-        server = std::make_unique<net::TcpServer>(io_, params_.listenPort);
-    } catch (const asio::system_error& e) {
-        bindEc = e.code();
-    } catch (const std::exception&) {
-        bindEc = asio::error::invalid_argument;
-    }
-    if (bindEc) {
-        running_ = false;
-        logEvent(rp::log::Level::Error, "Cannot listen on port " +
-                                             std::to_string(params_.listenPort) + ": " +
-                                             bindEc.message());
+    auto tryBind = [&](uint16_t port) -> bool {
+        try {
+            server = std::make_unique<net::TcpServer>(io_, port);
+            return true;
+        } catch (const asio::system_error& e) {
+            bindEc = e.code();
+        } catch (const std::exception&) {
+            bindEc = asio::error::invalid_argument;
+        }
+        server.reset();
         return false;
+    };
+    if (!tryBind(params_.listenPort)) {
+        logEvent(LogLevel::Warning, "Port " + std::to_string(params_.listenPort) +
+                                        " unavailable, picking an ephemeral port instead");
+        if (!tryBind(0)) {
+            running_ = false;
+            logEvent(rp::log::Level::Error, "Cannot listen on any port: " + bindEc.message());
+            return false;
+        }
     }
     actualPort_ = server->port();
     server_ = std::move(server);

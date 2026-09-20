@@ -20,6 +20,7 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <thread>
 
@@ -85,10 +86,14 @@ public:
 
     // Adaptive bitrate (Phase 15) and recovery (Phase 16) entry points.
     void setBitrate(int kbps);
-    // Re-initializes the encoder (keeps streaming). Used after encoder failure.
-    bool restartEncoder(std::string* err = nullptr);
+    // Asks the capture loop to re-initialize the encoder at the next frame
+    // boundary. The swap happens ON the capture thread (the only user of the
+    // encoder), which removes the restart-vs-encode data race that could
+    // destroy the encoder mid-encode. Fire-and-forget: failures surface via
+    // the error callback.
+    void requestEncoderRestart();
     // Force software encoder (recovery dialog: "Switch to software").
-    bool switchToSoftwareEncoder(std::string* err = nullptr);
+    void requestSoftwareEncoder();
 
     // Input path: forwards raw Input datagrams to the handler (HostApp routes
     // them through the injector with permission checks).
@@ -106,20 +111,37 @@ public:
 private:
     void captureLoop();
     void handleUdpControl(net::UdpType type, const std::vector<uint8_t>& payload);
+    // Runs on the capture thread: performs a pending encoder swap.
+    bool performEncoderRestart(std::string* err);
+    // Thread-safe snapshots (leaf lock; NEVER held while joining threads).
+    // encoder_ is touched by the capture loop, the Qt stats timer, the UDP io
+    // thread (keyframe requests) and ViGEm (rumble) - a plain unique_ptr
+    // reset during stop() could destroy it under a caller. Shared ownership
+    // plus a snapshot makes each accessor safe.
+    [[nodiscard]] std::shared_ptr<VideoEncoder> currentEncoder() const;
+    void setEncoder(std::shared_ptr<VideoEncoder> e);
+    [[nodiscard]] std::shared_ptr<net::UdpTransport> currentTransport() const;
+    void setTransport(std::shared_ptr<net::UdpTransport> t);
 
     StreamConfig cfg_{};
     uint32_t sessionId_ = 0;
     uint8_t  playerIndex_ = 0;
 
     std::unique_ptr<DisplayCapture> capture_;
-    std::unique_ptr<VideoEncoder> encoder_;
-    std::unique_ptr<net::UdpTransport> transport_;
+    std::shared_ptr<VideoEncoder> encoder_;          // guarded by memberMutex_
+    std::shared_ptr<net::UdpTransport> transport_;   // guarded by memberMutex_
     std::unique_ptr<audio::WasapiCapture> audioCapture_;
     std::unique_ptr<AudioEncoderOpus> audioEncoder_;
     bool audioThreadError_ = false;
+    mutable std::mutex memberMutex_;                 // leaf lock for the shared_ptrs above
 
     std::thread captureThread_;
     std::atomic<bool> running_{ false };
+
+    // Serializes start()/stop()/stats() against each other (start/stop mutate
+    // the member pointers; stats() reads them from the UI thread).
+    mutable std::mutex stopMutex_;
+    std::atomic<bool> restartRequested_{ false };   // capture loop swaps the encoder
 
     // stats
     mutable std::mutex statsMutex_;

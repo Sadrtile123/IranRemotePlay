@@ -28,7 +28,9 @@
 #include <atomic>
 #include <map>
 #include <memory>
+#include <mutex>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace rp::app {
@@ -127,13 +129,14 @@ private:
 
     input::InputInjector injector_;
     std::map<uint32_t, ClientStream> streams_;
+    std::vector<std::thread> initThreads_;   // stream-start workers; joined in stop()
     QTimer statsTimer_;
     AdaptiveBitrate abr_;
     bool abrEnabled_ = true;
     double expectedFps_ = 60.0;
 
     HostUiState ui_;
-    std::shared_ptr<std::atomic<bool>> alive_;   // detached-thread lifetime guard
+    std::shared_ptr<std::atomic<bool>> alive_;   // background-thread lifetime guard
 };
 
 } // namespace rp::app

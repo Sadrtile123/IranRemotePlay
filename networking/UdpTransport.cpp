@@ -35,7 +35,10 @@ bool UdpTransport::bind(const std::string& localAddress, uint16_t port, std::str
         localPort_.store(socket_->local_endpoint().port(), std::memory_order_relaxed);
 
         running_.store(true);
-        ioThread_ = std::thread([this] { runIo(); });
+        ioThread_ = std::thread([this] {
+            ioThreadId_.store(std::this_thread::get_id());
+            runIo();
+        });
         return true;
     } catch (const std::exception& e) {
         if (err) *err = e.what();
@@ -46,14 +49,28 @@ bool UdpTransport::bind(const std::string& localAddress, uint16_t port, std::str
 }
 
 void UdpTransport::stop() {
-    if (!running_.exchange(false)) return;
-    if (io_) {
+    // BUGFIX (crash/freeze): stop() may legitimately be reached FROM the io
+    // thread itself (a StreamStop/control callback calls into the streamer's
+    // stop chain). Joining our own thread there is a deadlock / std::terminate.
+    // When called on the io thread we only close the socket synchronously
+    // (safe between handlers); io_->run() then drains and the thread exits by
+    // itself. The next stop() from ANY other thread (owner or destructor)
+    // performs the join and member cleanup.
+    const bool onIoThread = ioThreadId_.load() == std::this_thread::get_id();
+    if (onIoThread) {
+        const bool wasRunning = running_.exchange(false);
+        if (wasRunning) {
+            if (pingTimer_) { std::error_code ec; pingTimer_->cancel(ec); }
+            if (socket_) { std::error_code ec; socket_->close(ec); }
+        }
+        return;   // no self-join, no member reset (io thread still uses them)
+    }
+
+    const bool wasRunning = running_.exchange(false);
+    if (wasRunning && io_) {
         asio::post(*io_, [this] {
-            if (pingTimer_) pingTimer_->cancel();
-            if (socket_) {
-                asio::error_code ec;
-                socket_->close(ec);
-            }
+            if (pingTimer_) { std::error_code ec; pingTimer_->cancel(ec); }
+            if (socket_) { std::error_code ec; socket_->close(ec); }
         });
     }
     if (ioThread_.joinable()) ioThread_.join();
@@ -130,6 +147,12 @@ void UdpTransport::handleDatagram(const uint8_t* buf, size_t size, const asio::i
         decryptedStorage = std::move(clear);
         payloadPtr = decryptedStorage.data();
         payloadLen = decryptedStorage.size();
+        // CRITICAL FIX: after decryption every consumer below must use the
+        // PLAINTEXT length. The wire header still carries the sealed size
+        // (counter + ciphertext + tag), which is larger than the plaintext;
+        // using it for slicing/vector sizes was a heap over-read on every
+        // encrypted datagram and corrupted ping/pong/control/input payloads.
+        h.payloadSize = static_cast<uint16_t>(payloadLen);
     } else if (secure_ && secure_->active()) {
         authDrops_.fetch_add(1);                                    // plaintext after keys active
         return;
@@ -160,7 +183,7 @@ void UdpTransport::handleDatagram(const uint8_t* buf, size_t size, const asio::i
     }
 
     const uint8_t* payload = payloadPtr;
-    (void)payloadLen;   // length implied by h.payloadSize / decrypted size
+    (void)payloadLen;   // h.payloadSize now reflects the effective (plaintext) length
     const UdpType type = static_cast<UdpType>(h.type);
 
     // Inter-arrival jitter estimate (EWMA of arrival-interval deviation, ns).

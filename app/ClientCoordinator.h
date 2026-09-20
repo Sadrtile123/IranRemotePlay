@@ -23,6 +23,7 @@
 #include <atomic>
 #include <memory>
 #include <string>
+#include <thread>
 
 namespace rp::app {
 
@@ -72,6 +73,7 @@ signals:
 
 private slots:
     void onStatsTimer();
+    void onStreamStartWatchdog();
 
 private:
     void wireSessionEvents();
@@ -79,6 +81,7 @@ private:
     void beginKeyExchange();
     void startStream(uint16_t udpPort, uint32_t udpSessionId);
     void wireInputForwarding();
+    bool inputWired_ = false;         // guard against duplicate connections on stream restart
 
     config::Config& cfg_;
     std::unique_ptr<client::ClientApp> client_;
@@ -96,10 +99,12 @@ private:
     std::string hostAddress_;
 
     std::shared_ptr<ClientStreamer> streamer_;
+    std::thread streamThread_;                    // stream-start worker (joined in stop())
     std::unique_ptr<input::InputSender> inputSender_;
     ui::VideoWidget* videoWidget_ = nullptr;    // not owned
 
     QTimer statsTimer_;
+    QTimer streamStartWatchdog_;                 // "host never sent STREAM_START" detector
     ClientUiState ui_;
     uint64_t lastRecvBytes_ = 0;
     std::shared_ptr<std::atomic<bool>> alive_;   // detached-thread lifetime guard

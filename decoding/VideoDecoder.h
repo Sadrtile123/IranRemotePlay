@@ -71,6 +71,8 @@ private:
     SwsContext* sws_ = nullptr;
     VideoCodec codec_ = VideoCodec::H264;
     int width_ = 0, height_ = 0;
+    int lastW_ = 0, lastH_ = 0;             // scaler source geometry (recreate on change)
+    int lastFmt_ = -1;                      // scaler source pixel format
     std::string decoderName_;
     uint64_t framesDecoded_ = 0;
     uint64_t bytesDecoded_ = 0;

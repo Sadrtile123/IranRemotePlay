@@ -52,12 +52,11 @@ bool HostCoordinator::startLan(const host::HostLaunchSettings& settings, QString
     stop();
     internetMode_ = false;
     settings_ = std::make_unique<host::HostLaunchSettings>(settings);
-    settings_->audioEnabled = true;
     settings_->audioBitrateKbps = cfg_.audio.bitrateKbps;
     host_ = std::make_unique<host::HostApp>();
     wireHostEvents();
     if (!host_->start(settings)) {
-        if (err) *err = "Could not bind the listen port.";
+        if (err) *err = "Could not start the session (is the listen port already in use? See the log for details.)";
         host_.reset();
         return false;
     }
@@ -80,7 +79,6 @@ bool HostCoordinator::startInternet(const host::HostLaunchSettings& settings,
     serverHost_ = serverAddress.toStdString();
     serverPort_ = serverPort;
     settings_ = std::make_unique<host::HostLaunchSettings>(settings);
-    settings_->audioEnabled = true;
     settings_->audioBitrateKbps = cfg_.audio.bitrateKbps;
 
     signaling_ = std::make_unique<signaling::SignalingClient>();
@@ -133,10 +131,18 @@ bool HostCoordinator::startInternet(const host::HostLaunchSettings& settings,
 
 void HostCoordinator::stop() {
     statsTimer_.stop();
+    // 1) Stop media flow first: this joins each streamer's capture/UDP threads
+    //    (and waits for any in-flight start() to finish, since start/stop are
+    //    serialized inside the streamer).
     for (auto& [id, cs] : streams_) {
         if (cs.streamer) cs.streamer->stop("coordinator stop");
         injector_.clientDisconnected(cs.playerIndex);
     }
+    // 2) Join the stream-start workers (no more detached threads).
+    for (auto& t : initThreads_) {
+        if (t.joinable()) t.join();
+    }
+    initThreads_.clear();
     streams_.clear();
     if (host_) { host_->stop(); host_.reset(); }
     if (signaling_) { signaling_->disconnect(); signaling_.reset(); }
@@ -300,16 +306,26 @@ void HostCoordinator::startStreamFor(ClientStream& cs) {
     const std::string token = hostToken_;
     const auto cryptoSink = cs.channel;   // installed before bind: no plaintext window
     const auto alive = alive_;
+    const uint32_t clientId = cs.clientId;
 
-    cs.streamer->setErrorCallback([this, id = cs.clientId](const std::string& msg) {
-        QMetaObject::invokeMethod(this, [this, id, msg] {
+    cs.streamer->setErrorCallback([this, clientId](const std::string& msg) {
+        QMetaObject::invokeMethod(this, [this, clientId, msg] {
             emit encoderTrouble(QString::fromStdString(msg));
-            (void)id;
+            // A streamer that stopped itself (fatal capture/encoder error) is
+            // torn down here so the client slot frees up.
+            if (auto* cs2 = findStream(clientId)) {
+                if (cs2->streamer && !cs2->streamer->running()) {
+                    cs2->streamer->stop("fatal pipeline error");
+                    injector_.clientDisconnected(cs2->playerIndex);
+                }
+            }
+            (void)clientId;
         }, Qt::QueuedConnection);
     });
 
-    // Heavy init (capture + encoder) off the UI thread.
-    std::thread([this, sc, udpSession, player, internet, serverHost, relayUdp, token, clientId = cs.clientId, streamer, cryptoSink, alive]() mutable {
+    // Heavy init (capture + encoder) off the UI thread. The thread is kept
+    // joinable and reaped in stop() — no more detached captures of `this`.
+    initThreads_.emplace_back([this, sc, udpSession, player, internet, serverHost, relayUdp, token, clientId, streamer, cryptoSink, alive]() mutable {
         std::string err;
         const bool ok = streamer->start(sc, udpSession, player, cryptoSink,
             [this, alive, clientId, player, sc, streamer, internet, serverHost, relayUdp, token](uint16_t udpPort, uint32_t sid) {
@@ -340,22 +356,26 @@ void HostCoordinator::startStreamFor(ClientStream& cs) {
                 QMetaObject::invokeMethod(this, [this] { emit stateChanged(); }, Qt::QueuedConnection);
             }, &err);
         if (!alive->load()) return;
-        QMetaObject::invokeMethod(this, [this, ok, err, clientId] {
+        QMetaObject::invokeMethod(this, [this, ok, err, clientId, player] {
             if (!ok) {
                 emit errorOccurred(QString("Stream start failed: %1").arg(QString::fromStdString(err)));
                 host_->kick(clientId);
             } else {
                 // Route input datagrams into the injector (permission-checked).
-                if (findStream(clientId)) {
-                    findStream(clientId)->streamer->setInputHandler(
-                        [this, clientId](const net::AssembledFrame& f) {
-                            injector_.applyInput(playerIndexOf(clientId), f.data.data(), f.data.size());
-                        });
+                // NOTE: `player` is captured by value — this handler runs on the
+                // UDP io thread and must not touch the streams_ map.
+                if (auto* cs3 = findStream(clientId)) {
+                    if (cs3->streamer) {
+                        cs3->streamer->setInputHandler(
+                            [this, player](const net::AssembledFrame& f) {
+                                injector_.applyInput(player, f.data.data(), f.data.size());
+                            });
+                    }
                 }
                 emit stateChanged();
             }
         }, Qt::QueuedConnection);
-    }).detach();
+    });
 
     ui_.gamepadStatus = QString::fromStdString(injector_.gamepadStatus());
 }
@@ -403,24 +423,14 @@ void HostCoordinator::setManualBitrate(int kbps) {
 
 void HostCoordinator::restartEncoders() {
     for (auto& [id, cs] : streams_) {
-        if (cs.streamer) {
-            std::string err;
-            if (!cs.streamer->restartEncoder(&err)) {
-                emit errorOccurred(QString("Encoder restart failed: %1").arg(QString::fromStdString(err)));
-            }
-        }
+        if (cs.streamer) cs.streamer->requestEncoderRestart();   // swap happens on the capture thread
     }
     emit stateChanged();
 }
 
 void HostCoordinator::switchEncodersToSoftware() {
     for (auto& [id, cs] : streams_) {
-        if (cs.streamer) {
-            std::string err;
-            if (!cs.streamer->switchToSoftwareEncoder(&err)) {
-                emit errorOccurred(QString("Software encoder failed: %1").arg(QString::fromStdString(err)));
-            }
-        }
+        if (cs.streamer) cs.streamer->requestSoftwareEncoder();
     }
     emit stateChanged();
 }

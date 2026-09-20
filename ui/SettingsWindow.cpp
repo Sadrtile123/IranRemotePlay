@@ -8,14 +8,18 @@
 
 #include <QCheckBox>
 #include <QComboBox>
+#include <QDesktopServices>
+#include <QFileInfo>
 #include <QFormLayout>
 #include <QGroupBox>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QLineEdit>
 #include <QPushButton>
+#include <QScrollArea>
 #include <QSpinBox>
 #include <QTimer>
+#include <QUrl>
 #include <QVBoxLayout>
 
 namespace rp::ui {
@@ -74,8 +78,9 @@ SettingsWindow::SettingsWindow(config::Config& config, QWidget* parent)
     audioBitrateCombo_->addItem(QStringLiteral("192 kbps"));
     audioForm->addRow(QStringLiteral("Opus bitrate:"), audioBitrateCombo_);
     auto* audioNote = new QLabel(
-        QStringLiteral("Applied when audio streaming ships (Phase 6); stored now."), audioBox);
+        QStringLiteral("Opus bitrate for the streamed game audio."), audioBox);
     audioNote->setWordWrap(true);
+    audioNote->setProperty("muted", true);
     audioForm->addRow(QString(), audioNote);
     rootLayout->addWidget(audioBox);
 
@@ -107,8 +112,9 @@ SettingsWindow::SettingsWindow(config::Config& config, QWidget* parent)
     jitterSpin_->setSuffix(QStringLiteral(" ms"));
     netForm->addRow(QStringLiteral("Jitter buffer:"), jitterSpin_);
     auto* jitterNote = new QLabel(
-        QStringLiteral("Applied to the UDP media transport (Phase 4); stored now."), netBox);
+        QStringLiteral("Video buffering before display - higher smooths jitter, adds latency."), netBox);
     jitterNote->setWordWrap(true);
+    jitterNote->setProperty("muted", true);
     netForm->addRow(QString(), jitterNote);
     portSpin_ = new QSpinBox(netBox);
     portSpin_->setRange(1024, 65535);
@@ -126,9 +132,18 @@ SettingsWindow::SettingsWindow(config::Config& config, QWidget* parent)
     // --- Save -------------------------------------------------------------------
     auto* footer = new QHBoxLayout();
     saveButton_ = new QPushButton(QStringLiteral("SAVE SETTINGS"), this);
+    saveButton_->setObjectName("primary");
     saveButton_->setMinimumHeight(36);
+    auto* folderButton = new QPushButton(QStringLiteral("Open config folder"), this);
+    folderButton->setCursor(Qt::PointingHandCursor);
+    connect(folderButton, &QPushButton::clicked, this, [] {
+        const QString dir = QString::fromStdString(rp::paths::configDir());
+        if (QFileInfo::exists(dir)) QDesktopServices::openUrl(QUrl::fromLocalFile(dir));
+    });
     savedLabel_ = new QLabel(this);
+    savedLabel_->setProperty("muted", true);
     footer->addWidget(saveButton_);
+    footer->addWidget(folderButton);
     footer->addWidget(savedLabel_);
     footer->addStretch(1);
     rootLayout->addLayout(footer);

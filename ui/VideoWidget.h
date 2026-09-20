@@ -28,6 +28,9 @@ public:
     void setStatsProvider(StatsProvider provider) { statsProvider_ = std::move(provider); }
     void showOverlay(bool on) { overlayVisible_ = on; update(); }
     bool overlayVisible() const { return overlayVisible_; }
+    // Set by the owning window: only a fullscreen Esc is consumed as "exit
+    // fullscreen"; otherwise Esc forwards to the game like any other key.
+    void setFullscreenActive(bool on) { fullscreenActive_ = on; }
 
     // Connection quality banner (shown when non-empty).
     void setQualityBanner(const QString& text);
@@ -42,6 +45,7 @@ signals:
     void mouseButtonReleased(int button, int x, int y);
     void mouseWheel(int delta);
     void toggleFullscreenRequested(bool fullscreen);
+    void escapePressed();                     // exits fullscreen (only consumed then)
 
 protected:
     void paintEvent(QPaintEvent* event) override;
@@ -67,6 +71,7 @@ public:
     StatsProvider statsProvider_;
     double fpsEstimate_ = 0.0;
     uint64_t lastFpsUpdateNs_ = 0;
+    bool fullscreenActive_ = false;
 };
 
 } // namespace rp::ui

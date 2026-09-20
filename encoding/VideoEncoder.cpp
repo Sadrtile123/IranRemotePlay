@@ -139,15 +139,22 @@ bool VideoEncoder::openEncoder(const std::string& name, std::string* err) {
         return false;
     }
 
+    // NOTE: av_frame_get_buffer REQUIRES format/width/height to be set on the
+    // frame BEFORE the call (FFmpeg allocates from those fields). Setting them
+    // afterwards made every encoder candidate fail with "frame alloc failed",
+    // which killed stream startup entirely.
     frame_ = av_frame_alloc();
-    if (!frame_ || av_frame_get_buffer(frame_, 32) < 0) {
+    if (frame_) {
+        frame_->format = AV_PIX_FMT_YUV420P;
+        frame_->width = p_.width;
+        frame_->height = p_.height;
+    }
+    if (!frame_ || frame_->width != p_.width || frame_->height != p_.height ||
+        av_frame_get_buffer(frame_, 32) < 0) {
         if (err) *err = "frame alloc failed";
         close();
         return false;
     }
-    frame_->format = AV_PIX_FMT_YUV420P;
-    frame_->width = p_.width;
-    frame_->height = p_.height;
 
     packet_ = av_packet_alloc();
     if (!packet_) { if (err) *err = "packet alloc failed"; close(); return false; }

@@ -125,10 +125,17 @@ bool VideoDecoder::emitFrame(AVFrame* avf, std::vector<DecodedFrame>& out) {
     height_ = avf->height;
     if (width_ <= 0 || height_ <= 0) return false;
 
-    if (!sws_) {
+    // Recreate the scaler when the source format or size changes (encoder
+    // restarts can alter dimensions mid-stream; a stale sws_ would corrupt
+    // the picture or overflow the destination).
+    if (!sws_ || lastW_ != width_ || lastH_ != height_ || lastFmt_ != avf->format) {
+        if (sws_) sws_freeContext(sws_);
         sws_ = sws_getContext(width_, height_, static_cast<AVPixelFormat>(avf->format),
                               width_, height_, AV_PIX_FMT_BGRA,
                               SWS_BILINEAR, nullptr, nullptr, nullptr);
+        lastW_ = width_;
+        lastH_ = height_;
+        lastFmt_ = avf->format;
         if (!sws_) return false;
     }
 

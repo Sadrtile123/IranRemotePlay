@@ -16,6 +16,7 @@
 #include <atomic>
 #include <functional>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <thread>
 
@@ -38,7 +39,8 @@ struct ClientStreamStats {
 
 class ClientStreamer {
 public:
-    using PresentCallback = std::function<void(const DecodedFrame&)>;
+    // Shared ownership avoids a full frame copy on every hop to the UI thread.
+    using PresentCallback = std::function<void(std::shared_ptr<DecodedFrame>)>;
     using ErrorCallback = std::function<void(const std::string&)>;
 
     ClientStreamer();
@@ -81,6 +83,9 @@ private:
 
     std::thread decodeThread_;
     std::atomic<bool> running_{ false };
+    // Serializes start()/stop()/stats() (stop may run while the coordinator's
+    // stream-start worker is still inside start()).
+    mutable std::mutex stopMutex_;
 
     PresentCallback presentCb_;
     ErrorCallback errorCb_;

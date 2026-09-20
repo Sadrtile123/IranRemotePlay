@@ -1,5 +1,13 @@
-RemotePlay 0.1.0 - Windows 10/11 x64
+RemotePlay 0.1.1 - Windows 10/11 x64
 ====================================
+
+WHAT'S NEW IN 0.1.1
+  * Fixed the "Stream start failed: no usable encoder (frame alloc failed)"
+    crash - streaming now starts.
+  * Fixed host freeze / "not responding" (dialog storm + thread deadlocks).
+  * F11 fullscreen now works (window-level, also double-click; Esc exits).
+  * New dark UI, stats grid, copy-code + open-logs buttons, recent hosts.
+  * Client shows a clear error if the host never starts the stream.
 
 QUICK START
   1. Run RemotePlay.exe (no installation needed).

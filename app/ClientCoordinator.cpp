@@ -26,6 +26,12 @@ ClientCoordinator::ClientCoordinator(config::Config& cfg, QObject* parent)
     : QObject(parent), cfg_(cfg), alive_(std::make_shared<std::atomic<bool>>(true)) {
     connect(&statsTimer_, &QTimer::timeout, this, &ClientCoordinator::onStatsTimer);
     statsTimer_.setInterval(1000);
+
+    // Fires when the host never sends STREAM_START: with the old code the UI
+    // sat on "waiting for stream" forever with no hint about what was wrong.
+    streamStartWatchdog_.setSingleShot(true);
+    streamStartWatchdog_.setInterval(15000);
+    connect(&streamStartWatchdog_, &QTimer::timeout, this, &ClientCoordinator::onStreamStartWatchdog);
 }
 
 ClientCoordinator::~ClientCoordinator() { stop(); alive_->store(false); }
@@ -38,6 +44,7 @@ void ClientCoordinator::setKeyboardMouseEnabled(bool kb, bool mouse) {
 
 bool ClientCoordinator::startLan(const QString& hostAddress, uint16_t port, const QString& playerName,
                                  const QString& sessionCode, QString* err) {
+    (void)err;   // connection errors surface asynchronously via errorOccurred
     stop();
     internetMode_ = false;
     hostAddress_ = hostAddress.toStdString();
@@ -110,8 +117,12 @@ bool ClientCoordinator::active() const { return client_ && client_->connected();
 
 void ClientCoordinator::stop() {
     statsTimer_.stop();
+    streamStartWatchdog_.stop();
+    inputWired_ = false;
     if (inputSender_) { inputSender_->stop(); inputSender_.reset(); }
-    if (streamer_) { streamer_->stop(); streamer_.reset(); }
+    if (streamer_) { streamer_->stop(); }   // waits for an in-flight start() to finish
+    if (streamThread_.joinable()) streamThread_.join();   // no more detached threads
+    streamer_.reset();
     channel_.reset();
     ecdh_.reset();
     ourSalt_.clear();
@@ -125,6 +136,7 @@ void ClientCoordinator::stop() {
 void ClientCoordinator::wireSessionEvents() {
     client::ClientSession::Events ev;
     ev.onLog = [this](log::Level lvl, const std::string& msg) {
+        (void)lvl;
         QMetaObject::invokeMethod(this, [this, msg] {
             emit logLine(QString::fromStdString(msg));
         }, Qt::QueuedConnection);
@@ -220,13 +232,16 @@ void ClientCoordinator::handleAppMessage(uint16_t type, const std::vector<uint8_
         }
         case Id::SessionKeyReady: {
             keysReady_ = true;
-            ui_.status = "Waiting for stream...";
+            ui_.status = "Waiting for the host to start the stream...";
+            streamStartWatchdog_.start();
+            emit stateChanged();
             break;
         }
         case Id::StreamStart: {
             auto* m = std::get_if<proto::msg::StreamStart>(&env->body);
             if (!m) return;
             keysReady_ = true;
+            streamStartWatchdog_.stop();
             negotiatedCodec_ = static_cast<common::VideoCodec>(m->codec);
             startStream(m->udpPort, m->sessionId);
             break;
@@ -252,11 +267,13 @@ void ClientCoordinator::startStream(uint16_t udpPort, uint32_t udpSessionId) {
     const auto weakStreamer = std::weak_ptr(streamer_);
 
     rp::ui::VideoWidget* widget = videoWidget_;
-    const auto present = [widget](const rp::DecodedFrame& df) {
-        if (!widget) return;
-        // Decode thread -> UI thread (deep-copies the frame inside invokeMethod).
+    // Decode thread -> UI thread. The DecodedFrame travels via shared_ptr (no
+    // 8 MB full copy per frame any more); VideoWidget::presentFrame does the
+    // single copy into its QImage.
+    const auto present = [widget](std::shared_ptr<rp::DecodedFrame> df) {
+        if (!widget || !df) return;
         QMetaObject::invokeMethod(widget, [widget, df] {
-            widget->presentFrame(df.bgra.data(), df.width, df.height, df.width * 4);
+            widget->presentFrame(df->bgra.data(), df->width, df->height, df->width * 4);
         }, Qt::QueuedConnection);
     };
     const auto onError = [this](const std::string& msg) {
@@ -265,17 +282,16 @@ void ClientCoordinator::startStream(uint16_t udpPort, uint32_t udpSessionId) {
         }, Qt::QueuedConnection);
     };
 
-    std::string err;
+    const uint8_t slot = static_cast<uint8_t>(ui_.playerIndex > 0 ? ui_.playerIndex - 1 : 0);
+    const bool kb = cfg_.input.keyboard;
+    const bool mouse = cfg_.input.mouse;
+    if (streamThread_.joinable()) streamThread_.join();   // reap any previous worker
     const bool viaRelay = internetMode_;
     const std::string host = internetMode_ ? serverHost_ : hostAddress_;
     const uint16_t port = internetMode_ ? relayUdpPort_ : udpPort;
     const std::string token = playerToken_;
-
-    const uint8_t slot = static_cast<uint8_t>(ui_.playerIndex > 0 ? ui_.playerIndex - 1 : 0);
-    const bool kb = cfg_.input.keyboard;
-    const bool mouse = cfg_.input.mouse;
-    std::thread([this, weakStreamer, present, onError, viaRelay, host, port, udpPort,
-                 udpSessionId, token, codec = negotiatedCodec_, crypto, alive, slot, kb, mouse]() mutable {
+    streamThread_ = std::thread([this, weakStreamer, present, onError, viaRelay, host, port, udpPort,
+                                 udpSessionId, token, codec = negotiatedCodec_, crypto, alive, slot, kb, mouse]() mutable {
         const auto streamer = weakStreamer.lock();
         if (!streamer) return;
         std::string serr;
@@ -295,6 +311,7 @@ void ClientCoordinator::startStream(uint16_t udpPort, uint32_t udpSessionId) {
         if (!alive->load()) return;
         QMetaObject::invokeMethod(this, [this, weakStreamer, slot, kb, mouse] {
             ui_.status = "Streaming";
+            streamStartWatchdog_.stop();
             // Input forwarding starts only AFTER the transport exists (the
             // streamer is running now) - fixes the null-transport race.
             const auto s = weakStreamer.lock();
@@ -308,11 +325,13 @@ void ClientCoordinator::startStream(uint16_t udpPort, uint32_t udpSessionId) {
             wireInputForwarding();
             emit stateChanged();
         }, Qt::QueuedConnection);
-    }).detach();
+    });
 }
 
 void ClientCoordinator::wireInputForwarding() {
-    if (!videoWidget_ || !inputSender_) return;
+    if (!videoWidget_ || !inputSender_ || inputWired_) return;
+    inputWired_ = true;   // one connection set per video widget; a reconnect
+                          // reuses them (they read the CURRENT input sender)
     // VideoWidget emits on the UI thread; InputSender queue is thread-safe.
     connect(videoWidget_, &rp::ui::VideoWidget::keyPressed, this,
             [this](int key, bool repeat) {
@@ -373,12 +392,20 @@ void ClientCoordinator::wireInputForwarding() {
         e.timestampNs = rp::net::steadyNowNs();
         inputSender_->queueEvent(e);
     });
-    connect(videoWidget_, &rp::ui::VideoWidget::toggleFullscreenRequested, this,
-            [this](bool fullscreen) {
-        if (!videoWidget_) return;
-        if (fullscreen) videoWidget_->showFullScreen();
-        else videoWidget_->showNormal();
-    });
+    // Fullscreen toggling is handled by ClientWindow (window-level, F11 +
+    // double-click); the old connection here called showFullScreen() on the
+    // child video widget, which does nothing for a non-top-level widget.
+}
+
+void ClientCoordinator::onStreamStartWatchdog() {
+    if (streamer_ && streamer_->running()) return;   // stream came up; ignore
+    emit errorOccurred(
+        "The host did not start the video stream within 15 seconds. "
+        "The host app may have hit an error (see its log under %LOCALAPPDATA%\\RemotePlay\\Logs) "
+        "or the connection is blocked. Disconnecting.");
+    ui_.status = "Stream never started";
+    emit stateChanged();
+    stop();
 }
 
 void ClientCoordinator::onStatsTimer() {
