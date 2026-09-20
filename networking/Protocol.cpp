@@ -18,6 +18,9 @@ bool knownId(uint16_t raw) {
         case Id::InputPermission:
         case Id::Kick:
         case Id::Bye:
+        case Id::StreamStart:
+        case Id::StreamStop:
+        case Id::KeyframeRequest:
             return true;
         default:
             return false;
@@ -136,6 +139,21 @@ void writeMsg(ByteWriter& w, const msg::Kick& m) { w.str(m.reason); }
 
 void writeMsg(ByteWriter& w, const msg::Bye& m) { w.str(m.reason); }
 
+void writeMsg(ByteWriter& w, const msg::StreamStart& m) {
+    w.u16(m.udpPort);
+    w.u32(m.sessionId);
+    w.u8(m.playerIndex);
+    w.u8(m.codec);
+    w.u16(m.width);
+    w.u16(m.height);
+    w.u8(m.fps);
+    w.u32(m.bitrateKbps);
+}
+
+void writeMsg(ByteWriter& w, const msg::StreamStop& m) { w.str(m.reason); }
+
+void writeMsg(ByteWriter& /*w*/, const msg::KeyframeRequest&) {}
+
 // Per-message readers ------------------------------------------------------
 
 bool readMsg(ByteReader& r, msg::ClientHello& m) {
@@ -208,6 +226,25 @@ bool readMsg(ByteReader& r, msg::Bye& m) {
     m.reason = r.str();
     return r.ok();
 }
+
+bool readMsg(ByteReader& r, msg::StreamStart& m) {
+    m.udpPort = r.u16();
+    m.sessionId = r.u32();
+    m.playerIndex = r.u8();
+    m.codec = r.u8();
+    m.width = r.u16();
+    m.height = r.u16();
+    m.fps = r.u8();
+    m.bitrateKbps = r.u32();
+    return r.ok() && r.remaining() == 0;
+}
+
+bool readMsg(ByteReader& r, msg::StreamStop& m) {
+    m.reason = r.str();
+    return r.ok();
+}
+
+bool readMsg(ByteReader& r, msg::KeyframeRequest&) { return r.ok() && r.remaining() == 0; }
 
 } // namespace
 
@@ -290,6 +327,24 @@ std::optional<Envelope> decodeMessage(uint16_t rawType, const uint8_t* data, uin
         }
         case Id::Bye: {
             msg::Bye m;
+            ok = readMsg(r, m);
+            if (ok) e.body = std::move(m);
+            break;
+        }
+        case Id::StreamStart: {
+            msg::StreamStart m;
+            ok = readMsg(r, m);
+            if (ok) e.body = std::move(m);
+            break;
+        }
+        case Id::StreamStop: {
+            msg::StreamStop m;
+            ok = readMsg(r, m);
+            if (ok) e.body = std::move(m);
+            break;
+        }
+        case Id::KeyframeRequest: {
+            msg::KeyframeRequest m;
             ok = readMsg(r, m);
             if (ok) e.body = std::move(m);
             break;

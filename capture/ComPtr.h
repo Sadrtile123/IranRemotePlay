@@ -2,6 +2,15 @@
 // Minimal RAII COM pointer (avoids <wrl/client.h> differences between MSVC and MinGW).
 // Same semantics as Microsoft::WRL::ComPtr for the subset we use.
 
+// Exclude winsock.h from windows.h (pulled in by unknwn.h below): standalone
+// Asio must include winsock2.h itself, and a pre-included winsock.h breaks it.
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+
 #include <guiddef.h>
 #include <unknwn.h>
 

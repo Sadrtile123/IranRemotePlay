@@ -9,6 +9,14 @@
 
 #include "ComPtr.h"
 
+// Exclude winsock.h from windows.h: standalone Asio must include winsock2.h
+// itself, and duplicated/old winsock headers break the build.
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
 #include <d3d11.h>
 #include <dxgi1_2.h>
 

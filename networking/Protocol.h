@@ -142,11 +142,32 @@ struct Bye {
     std::string reason;
 };
 
+// Phase 4+ — sent by the host after negotiation, when streaming actually begins.
+// The client targets `udpPort` with the UDP media transport and stamps every
+// datagram with `sessionId` (spoof/misroute rejection on both ends).
+struct StreamStart {
+    uint16_t udpPort = 0;         // host UDP port for THIS client (player)
+    uint32_t sessionId = 0;
+    uint8_t  playerIndex = 0;     // 0..3 (PLAYER 1..4)
+    uint8_t  codec = 0;           // common::VideoCodec
+    uint16_t width = 1920;
+    uint16_t height = 1080;
+    uint8_t fps = 60;
+    uint32_t bitrateKbps = 8000;
+};
+
+struct StreamStop {
+    std::string reason;
+};
+
+struct KeyframeRequest {};
+
 } // namespace msg
 
 using Body = std::variant<msg::ClientHello, msg::HostReject, msg::HostApproved, msg::HostCapabilities,
                           msg::ClientCapabilities, msg::NegotiationResult, msg::Ping, msg::Pong,
-                          msg::InputPermission, msg::Kick, msg::Bye>;
+                          msg::InputPermission, msg::Kick, msg::Bye,
+                          msg::StreamStart, msg::StreamStop, msg::KeyframeRequest>;
 
 struct Envelope {
     Id type = Id::ClientHello;
