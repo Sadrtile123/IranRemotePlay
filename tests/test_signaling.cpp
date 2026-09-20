@@ -12,9 +12,17 @@
 #include <atomic>
 #include <chrono>
 #include <cstdlib>
-#include <cstdlib>
 #include <future>
+#include <string>
 #include <thread>
+
+#if defined(_WIN32)
+#define RP_POPEN  _popen
+#define RP_PCLOSE _pclose
+#else
+#define RP_POPEN  popen
+#define RP_PCLOSE pclose
+#endif
 
 using namespace rp::net;
 using namespace rp::signaling;
@@ -30,15 +38,26 @@ RP_TEST(signaling_end_to_end_with_python_server) {
     const uint16_t port = pickPort();
 
     // ---- start the real server ----
+    // POSIX:  shell backgrounds the server and echoes the PID so popen returns.
+    // Windows: `start /B` launches detached in the same console; the server is
+    // never killed by the test (it self-expires, and CI VMs are ephemeral).
     const char* py = std::getenv("REMOTEPLAY_PYTHON");
+    std::string cmd;
+#if defined(_WIN32)
+    std::string python = py && *py ? py : "python";
+    cmd = "cd /d ..\\server\\signaling-server && start \"rp_server\" /B " + python +
+          " server.py --host 127.0.0.1 --port " + std::to_string(port) +
+          " >NUL 2>&1";
+#else
     std::string python = py && *py ? py : "python3";
-    std::string cmd = "cd ../server/signaling-server && " + python +
-                      " server.py --host 127.0.0.1 --port " +
-                      std::to_string(port) + " >/tmp/rp_server_test.log 2>&1 & echo $!";
-    FILE* pf = popen(cmd.c_str(), "r");
+    cmd = "cd ../server/signaling-server && " + python +
+          " server.py --host 127.0.0.1 --port " + std::to_string(port) +
+          " >/tmp/rp_server_test.log 2>&1 & echo $!";
+#endif
+    FILE* pf = RP_POPEN(cmd.c_str(), "r");
     char buf[32]{};
     (void)fgets(buf, sizeof(buf), pf);
-    pclose(pf);
+    RP_PCLOSE(pf);
     std::this_thread::sleep_for(std::chrono::milliseconds(700));
 
     SignalingClient hostSig, clientSig;
