@@ -7,6 +7,12 @@ on:
   pull_request:
   workflow_dispatch:
 
+# The release step (tags only) creates a GitHub Release and uploads assets,
+# which requires write access to repo contents. Without this, the default
+# read-only token yields 403 "Resource not accessible by integration".
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: windows-latest
