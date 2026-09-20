@@ -4,6 +4,7 @@
 
 #include "../common/Config.h"
 #include "../common/Log.h"
+#include "../input/InputProtocol.h"
 
 #include <chrono>
 #include <cmath>
@@ -233,6 +234,19 @@ void HostStreamer::setClientEndpoint(const std::string& address, uint16_t port) 
     } else {
         RP_WARN() << "[streamer] setClientEndpoint failed: " << err;
     }
+}
+
+void HostStreamer::setInputHandler(std::function<void(const net::AssembledFrame&)> handler) {
+    if (transport_) transport_->setInputCallback(std::move(handler));
+}
+
+void HostStreamer::sendRumble(uint8_t playerIndex, uint8_t leftMotor, uint8_t rightMotor) {
+    if (!transport_) return;
+    rp::input::RumbleCommand rc;
+    rc.playerIndex = playerIndex;
+    rc.leftMotor = leftMotor;
+    rc.rightMotor = rightMotor;
+    transport_->sendSmall(net::UdpType::Control, &rc, sizeof(rc));
 }
 
 void HostStreamer::requestKeyframe() {

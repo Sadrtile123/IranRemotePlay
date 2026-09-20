@@ -1,4 +1,7 @@
 #pragma once
+
+#include "../common/WinHeaders.h"
+
 // Phase 7 — client-side audio playback via WASAPI shared-mode render.
 // Accepts interleaved s16 stereo 48 kHz, buffers ~120 ms, and feeds the
 // default output device on a render thread. Underruns are reported for stats.

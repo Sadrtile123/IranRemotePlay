@@ -1,4 +1,7 @@
 #pragma once
+
+#include "../common/WinHeaders.h"
+
 // Phase 6 — WASAPI loopback capture of whatever the host is playing.
 //
 // Captures the default render device's mix (all game audio) in shared mode,

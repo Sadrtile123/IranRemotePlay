@@ -88,6 +88,13 @@ public:
     // Force software encoder (recovery dialog: "Switch to software").
     bool switchToSoftwareEncoder(std::string* err = nullptr);
 
+    // Input path: forwards raw Input datagrams to the handler (HostApp routes
+    // them through the injector with permission checks).
+    void setInputHandler(std::function<void(const net::AssembledFrame&)> handler);
+
+    // Rumble backchannel: injector (game vibration) -> client's pad.
+    void sendRumble(uint8_t playerIndex, uint8_t leftMotor, uint8_t rightMotor);
+
     [[nodiscard]] HostStreamStats stats() const;
     [[nodiscard]] bool running() const { return running_.load(); }
     [[nodiscard]] uint16_t udpPort() const { return transport_ ? transport_->localPort() : 0; }
